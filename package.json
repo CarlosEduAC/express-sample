@@ -1,0 +1,22 @@
+{
+  "name": "express",
+  "version": "1.0.0",
+  "description": "O HTTP (Hypertext Transfer Protocol) é o protocolo de comunicação utilizado na web. Ele define como as mensagens são formatadas e transmitidas entre clientes (como navegadores ou aplicativos) e servidores. O HTTP é baseado em um modelo de requisição e resposta, onde o cliente envia uma requisição ao servidor, que processa a solicitação e retorna uma resposta.",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx watch src/main/server.ts",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
