@@ -6,7 +6,7 @@ export class UserController {
   constructor(
     private listUsersUseCase: ListUsersUseCase,
     private createUserUseCase: CreateUserUseCase,
-) {}
+  ) {}
 
   async create(req: Request, res: Response): Promise<Response> {
     try {

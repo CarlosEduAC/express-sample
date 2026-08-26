@@ -14,7 +14,13 @@ export class User {
     this.props = props;
   }
 
-  get id() { return this.props.id; }
-  get name() { return this.props.name; }
-  get email() { return this.props.email; }
+  get id() {
+    return this.props.id;
+  }
+  get name() {
+    return this.props.name;
+  }
+  get email() {
+    return this.props.email;
+  }
 }
