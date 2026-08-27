@@ -1,6 +1,6 @@
 # Estrutura de Projeto Node.js com Clean Architecture
 
-## Teoria – Anatomia de um Projeto Profissional
+## Teoria - Anatomia de um Projeto Profissional
 
 1. O Problema das Estruturas Tradicionais (Ex: "MVC Invertido" ou "Pasta por Tipo")
 
