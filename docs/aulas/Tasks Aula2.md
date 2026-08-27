@@ -1,6 +1,6 @@
 # Atividades
 
-## 1. Remover um Pokémon pelo ID
+## Exercício 1: Remover um Pokémon pelo ID
 
 Verbo HTTP: DELETE
 
@@ -14,7 +14,7 @@ Se não existir, retornar 404 Not Found.
 
 Se existir, remover do array pokemons e retornar 200 OK ou 204 No Content.
 
-## 2. Atualizar um Pokémon pelo ID
+## Exercício 2: Atualizar um Pokémon pelo ID
 
 Verbo HTTP: PUT
 
@@ -28,7 +28,7 @@ Se não existir, retornar 404 Not Found.
 
 Se existir, atualizar os dados do Pokémon e retornar 200 OK.
 
-## 3. Rota de Estatísticas Gerais da API
+## Exercício 3: Rota de Estatísticas Gerais da API
 
 Verbo HTTP: GET
 
