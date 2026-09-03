@@ -88,7 +88,7 @@ O swagger-autogen faz uma análise estática e dinâmica das suas rotas Express:
 
 - Ele mapeia os arquivos informados no array endpointsFiles (ex: ['../server.ts']).
 - Ele identifica todos os verbos e rotas registrados (ex: router.get('/users', ...)).
-- Ele lê o objeto base doc definido no script swagger.ts para usar como cabeçalho global (versão, título, schemas reutilizáveis/definitions).
+- Ele lê o objeto base doc definido no script swagger-generator.ts para usar como cabeçalho global (versão, título, schemas reutilizáveis/definitions).
 - Ele compila todas essas informações e grava o resultado final no arquivo estático de saída (swagger-output.json).
 
 ### É possível editar o swagger-output.json manualmente?
@@ -119,7 +119,7 @@ Para enriquecer a documentação gerada pelo swagger-autogen, adicionamos coment
 ```typescript
 /*
 
-  #swagger.tags = ['Users']                              // Agrupa a rota no painel visual
+  #swagger.tags = ['Users']                                // Agrupa a rota no painel visual
   #swagger.summary = 'Título curto da rota'               // Resumo da ação (ex: Lista usuários)
   #swagger.description = 'Descrição longa explicativa'   // Detalhes da regra/comportamento
   #swagger.deprecated = false                           // Sinaliza se a rota está obsoleta
@@ -164,7 +164,7 @@ Para enriquecer a documentação gerada pelo swagger-autogen, adicionamos coment
 */
 ```
 
-### Os comentários nos controllers são necessários?
+### Os comentários nas rotas/controllers são necessários?
 
 Não são estritamente obrigatórios, mas são altamente recomendados.
 
