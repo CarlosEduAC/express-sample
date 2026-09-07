@@ -1,5 +1,6 @@
 import { User } from '@domain/entities/user';
 import { IUserRepository } from '@domain/repositories/user.repository';
+import { AppError } from '@domain/errors/app.error';
 
 interface CreateUserDTO {
   id: string;
@@ -14,7 +15,7 @@ export class CreateUserUseCase {
     const userAlreadyExists = await this.userRepository.findByEmail(data.email);
 
     if (userAlreadyExists) {
-      throw new Error('Usuário com este e-mail já existe.');
+      throw new AppError('Usuário com este e-mail já está cadastrado.', 400);
     }
 
     const user = new User(data);
