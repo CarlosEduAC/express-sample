@@ -1,71 +1,41 @@
 # Atividades
 
-## Exercício 1: Criando Erros de Domínio Customizados (AppError)
+## Exercício 1: Adicione Docker e Docker Compose no Projeto
 
-Objetivo: Exercitar a criação da classe de erro da camada de Domínio e usá-la nos Casos de Uso.
+Adicione um Dockerfile e um arquivo docker-compose.yml ao projeto. Certifique-se de que o Dockerfile define a imagem base, copia os arquivos necessários e expõe a porta correta. No docker-compose.yml, defina os serviços necessários, incluindo o serviço da aplicação e o banco de dados PostgreSQL, utilizando as variáveis de ambiente definidas no arquivo .env.
 
-O que fazer:
+## Exercício 2: Configurar Variáveis de Ambiente
 
-1. Verifique se o arquivo src/domain/errors/app-error.ts está criado e exportando a classe AppError com as propriedades message e statusCode.
-2. No Caso de Uso GetUserByIdUseCase, altere a validação: se o usuário não for encontrado pelo ID, lance um AppError com a mensagem "Usuário não encontrado na base de dados." e o status code 404.
-3. No Caso de Uso CreateUserUseCase, se o e-mail já existir, lance um AppError com a mensagem "Já existe um usuário cadastrado com este e-mail." e o status code 409 (Conflict).
+Crie um arquivo `.env.example` na raiz do projeto e defina as variáveis de ambiente necessárias, incluindo a porta da aplicação, o ambiente de execução e as credenciais do banco de dados PostgreSQL. Certifique-se de que o arquivo `.env` real utilize essas variáveis.
 
-## Exercício 2: Limpeza dos Controllers (Removendo o try/catch)
+## Exercício 3: Subir a Aplicação com Docker Compose
 
-Objetivo: Aplicar o padrão onde o Controller apenas recebe o payload, chama o Caso de Uso e retorna o status de sucesso, deixando as exceções passarem direto para o Express.
+Utilize o comando `docker compose up -d` para subir todos os serviços definidos no arquivo `docker-compose.yml`. Certifique-se de que todos os containers estão em execução corretamente utilizando o comando `docker compose ps`.
 
-O que fazer:
+## Exercício 4: Conectar com sucesso na interface do Adminer na porta 8080
 
-1. Abra o arquivo src/infrastructure/http/controllers/user-controller.ts.
-2. Remova todos os blocos try/catch dos métodos create, list e getById.
-3. Garanta que, ao disparar um erro dentro de qualquer Caso de Uso, o método do Controller não capture o erro manualmente.
+Acesse a interface do Adminer através do navegador utilizando o endereço `http://localhost:8080`. Utilize as credenciais do banco de dados PostgreSQL definidas nas variáveis de ambiente para se conectar ao banco de dados. Certifique-se de que a conexão seja bem-sucedida, a principio não teremos tabelas criadas no banco de dados.
 
-## Exercício 3: O Middleware Global (errorHandler)
+## Exercício 5: Parar e Remover os Containers
 
-Objetivo: Criar e registrar o middleware centralizador no pipeline do Express.
+Utilize o comando `docker compose down` para parar todos os serviços e remover os containers criados. Se desejar também remover os volumes associados, utilize o comando `docker compose down -v`.
 
-O que fazer:
+## Exercício 6: Verificar Logs dos Containers
 
-1. Crie o arquivo src/infrastructure/http/middlewares/error-handler.ts.
-2. Implemente a função errorHandler recebendo os 4 parâmetros (error: Error, req: Request, res: Response, next: NextFunction).
-3. Se o error for uma instância de AppError, retorne a resposta no formato:
+Utilize o comando `docker compose logs -f` para visualizar os logs de todos os containers em tempo real. Isso é útil para depuração e para garantir que os serviços estão funcionando corretamente.
 
-```json
+## Exercício 7: Acessar o Container da Aplicação
 
-{
-  "status": "error",
-  "statusCode": 400,
-  "message": "Mensagem do erro aqui"
-}
+Utilize o comando `docker compose exec <nome_do_servico> sh` para acessar o container da aplicação. Substitua `<nome_do_servico>` pelo nome do serviço definido no arquivo `docker-compose.yml`. Isso permite que você execute comandos diretamente dentro do container da aplicação.
 
+## Exercício 8: Verifique se tem acesso a API
+
+Acesse a API através do navegador ou utilizando uma ferramenta como o `curl` ou o Postman. O endereço da API será `http://localhost:3333`. Certifique-se de que a API está respondendo corretamente às requisições. Por exemplo, você pode testar o endpoint principal com o seguinte comando:
+
+```bash
+curl http://localhost:3333
 ```
 
-4. Se o erro for uma falha genérica (ex: TypeError), printe o erro com console.error e retorne status 500 com a mensagem "Erro interno no servidor.".
-5. No arquivo src/main/server.ts, registre o app.use(errorHandler) obrigatoriamente após a declaração de todas as rotas e do Swagger.
+## Exercício 9: Verifique se tem acesso ao swagger
 
-## Exercício 4: Validação Prática e Testes HTTP (Desafio da Turma)
-
-Objetivo: Testar os cenários de sucesso e falha usando o cURL, Insomnia ou a própria interface do Swagger.
-
-Cenários a serem testados e validados:
-
-1. Teste A (Sucesso - 201 Created):
-Cadastre um usuário novo com e-mail válido.
-2. Teste B (Conflito - 409 Conflict):
-Tente cadastrar exatamente o mesmo usuário novamente. Verifique se o middleware respondeu com status 409 e o JSON do AppError.
-3. Teste C (Não Encontrado - 404 Not Found):
-Faça um GET /api/v1/users/id-inexistente e confirme se o retorno foi 404.
-4. Teste D (Erro Inesperado - 500 Internal Server Error):
-Force um erro simulado no código (ex: throw new Error("Erro de conexão simulado")) dentro de um Caso de Uso e verifique se o servidor responde 500 sem expor a stack de código do servidor para o cliente.
-
-## Exercício 5: Criar Readme do projeto
-
-Objetivo: Documentar o projeto, explicando como configurá-lo, executá-lo e testá-lo.
-
-O que fazer:
-
-1. Crie um arquivo README.md na raiz do projeto.
-2. Adicione uma seção de introdução explicando o propósito do projeto.
-3. Adicione instruções de instalação e execução do projeto.
-4. Explique como rodar os testes e como utilizar os endpoints da API.
-5. Inclua exemplos de requisições e respostas, se possível.
+Acesse o Swagger através do navegador utilizando o endereço `http://localhost:3333/swagger`. Certifique-se de que a documentação da API está sendo exibida corretamente e se funciona.

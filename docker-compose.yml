@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # Serviço 1: A Nossa Manager API (Node.js + TS)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manager_api
+    restart: always
+    ports:
+      - "${PORT:-3333}:3333"
+    environment:
+      - PORT=${PORT:-3333}
+      - NODE_ENV=${NODE_ENV:-development}
+      - DATABASE_URL=${DATABASE_URL}
+    volumes:
+      # Volume de desenvolvimento: Espelha alterações de código em tempo real
+      - ./src:/usr/src/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - manager_network
+
+  # Serviço 2: Banco de Dados PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: manager_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-manager}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-manager_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-manager} -d ${POSTGRES_DB:-manager_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - manager_network
+
+  # Serviço 3: Interface de Gerenciamento pgAdmin 4
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: manager_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@manager.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-adminpassword}
+    ports:
+      - "${PGADMIN_PORT:-8080}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - manager_network
+
+# Declarando a persistência de dados para o Banco e pgAdmin
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+# Rede interna privada para comunicação entre os containers
+networks:
+  manager_network:
+    driver: bridge
