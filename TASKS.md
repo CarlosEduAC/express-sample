@@ -1,41 +1,103 @@
 # Atividades
 
-## Exercício 1: Adicione Docker e Docker Compose no Projeto
+## Exercício 1: Adicionar Banco de Dados no PokeManager API
 
-Adicione um Dockerfile e um arquivo docker-compose.yml ao projeto. Certifique-se de que o Dockerfile define a imagem base, copia os arquivos necessários e expõe a porta correta. No docker-compose.yml, defina os serviços necessários, incluindo o serviço da aplicação e o banco de dados PostgreSQL, utilizando as variáveis de ambiente definidas no arquivo .env.
+1. Criar a tabela users via pgAdmin
 
-## Exercício 2: Configurar Variáveis de Ambiente
+- Acesse <http://localhost:8080>.
+- Abra a ferramenta Query Tool no banco pokemanager_db.
+- Execute o script de CREATE TABLE apresentado na aula.
 
-Crie um arquivo `.env.example` na raiz do projeto e defina as variáveis de ambiente necessárias, incluindo a porta da aplicação, o ambiente de execução e as credenciais do banco de dados PostgreSQL. Certifique-se de que o arquivo `.env` real utilize essas variáveis.
+2. Implementar a classe PgPokemonRepository no PokeManager API
 
-## Exercício 3: Subir a Aplicação com Docker Compose
+- Substituir a injeção do repositório na Factory pelo PgPokemonRepository.
 
-Utilize o comando `docker compose up -d` para subir todos os serviços definidos no arquivo `docker-compose.yml`. Certifique-se de que todos os containers estão em execução corretamente utilizando o comando `docker compose ps`.
+3. Disparar requisições via Swagger (/api/docs)
 
-## Exercício 4: Conectar com sucesso na interface do Adminer na porta 8080
+- Cadastrar novos pokemons no POST /pokemons.
 
-Acesse a interface do Adminer através do navegador utilizando o endereço `http://localhost:8080`. Utilize as credenciais do banco de dados PostgreSQL definidas nas variáveis de ambiente para se conectar ao banco de dados. Certifique-se de que a conexão seja bem-sucedida, a principio não teremos tabelas criadas no banco de dados.
+- Abrir o pgAdmin e dar um SELECT * FROM pokemons; para visualizar as linhas inseridas fisicamente no banco!
 
-## Exercício 5: Parar e Remover os Containers
+- Ajustar todos os endpoints para utilizar o PgPokemonRepository.
 
-Utilize o comando `docker compose down` para parar todos os serviços e remover os containers criados. Se desejar também remover os volumes associados, utilize o comando `docker compose down -v`.
+Obs: Garanta a utilização de parâmetros preparados ($1) para evitar vulnerabilidades de SQL Injection:
 
-## Exercício 6: Verificar Logs dos Containers
+```ts
 
-Utilize o comando `docker compose logs -f` para visualizar os logs de todos os containers em tempo real. Isso é útil para depuração e para garantir que os serviços estão funcionando corretamente.
+// ✅ Seguro: Parametrizado via driver pg
+const query = `SELECT id, name, type, level FROM pokemons WHERE type = $1`;
+const result = await postgresPool.query(query, [type]);
 
-## Exercício 7: Acessar o Container da Aplicação
-
-Utilize o comando `docker compose exec <nome_do_servico> sh` para acessar o container da aplicação. Substitua `<nome_do_servico>` pelo nome do serviço definido no arquivo `docker-compose.yml`. Isso permite que você execute comandos diretamente dentro do container da aplicação.
-
-## Exercício 8: Verifique se tem acesso a API
-
-Acesse a API através do navegador ou utilizando uma ferramenta como o `curl` ou o Postman. O endereço da API será `http://localhost:3333`. Certifique-se de que a API está respondendo corretamente às requisições. Por exemplo, você pode testar o endpoint principal com o seguinte comando:
-
-```bash
-curl http://localhost:3333
 ```
 
-## Exercício 9: Verifique se tem acesso ao swagger
+## Exercício 2: Atualização de Nível do Pokémon (PATCH)
 
-Acesse o Swagger através do navegador utilizando o endereço `http://localhost:3333/swagger`. Certifique-se de que a documentação da API está sendo exibida corretamente e se funciona.
+1. Implementar o endpoint PATCH /pokemons/:id/level no PokeManager API para atualizar o nível de um Pokémon específico.
+2. Implementar a lógica no PgPokemonRepository para atualizar o nível do Pokémon no banco de dados utilizando parâmetros preparados ($1, $2). Implemente as instruções DML em SQL puro.
+3. Testar o endpoint PATCH /pokemons/:id/level via Swagger (/api/docs) para garantir que o nível do Pokémon seja atualizado corretamente no banco de dados.
+
+```ts
+
+updateLevel(id: string, newLevel: number): Promise<void>
+
+```
+
+Obs: Lembre-se de manter a estrutura de clean code ao implementar o método updateLevel.
+
+## Exercício 3: Tabela de Treinadores e Captura de Duplicidade (UNIQUE)
+
+Tratar exceções nativas do PostgreSQL (Código 23505 — unique_violation) ao tentar cadastrar um treinador com e-mail ou insígnia já existente.
+
+1. Estrutura SQL no pgAdmin:
+
+```sql
+
+CREATE TABLE IF NOT EXISTS trainers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(150) NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  city VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+```
+
+2. O que fazer no código:
+
+- Criar uma interface IPgTrainerRepository com métodos para cadastrar, atualizar e buscar treinadores no banco de dados utilizando parâmetros preparados.
+- No repositório PgTrainerRepository, ao executar a inserção de um novo Treinador (INSERT INTO trainers...), envolva a chamada do postgresPool.query em um bloco try/catch.
+- Capture o código de erro nativo do PostgreSQL 23505 e converta para a nossa classe de domínio AppError:
+
+```ts
+
+try {
+  await postgresPool.query(query, [trainer.id, trainer.name, trainer.email, trainer.city]);
+} catch (error: any) {
+  if (error.code === '23505') {
+    throw new AppError('Já existe um Treinador cadastrado com este e-mail.', 409);
+  }
+  throw error;
+}
+
+```
+
+- Teste o comportamento enviando dois cadastros iguais via Swagger e confirme se a API responde com status 409 Conflict.
+
+## Exercício 4: Consulta Avançada com Filtro Parcial (LIKE) e Contagem
+
+Praticar busca por nome parcial de Pokémons e contagem total do catálogo no banco.
+
+O que fazer:
+
+1. Crie o método searchByName(term: string): Promise<Pokemon[]> no repositório nativo.
+
+2. Utilize o operador ILIKE do PostgreSQL para fazer a busca case-insensitive (ignorando maiúsculas e minúsculas):
+
+```ts
+
+const query = `SELECT id, name, type, level FROM pokemons WHERE name ILIKE $1`;
+const result = await postgresPool.query(query, [`%${term}%`]);
+
+```
+
+3. Teste buscando por "pika" e verifique se o banco retorna "Pikachu".
