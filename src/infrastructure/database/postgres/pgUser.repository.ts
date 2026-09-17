@@ -5,10 +5,10 @@ import { postgresPool } from './connection';
 export class PgUserRepository implements IUserRepository {
   async create(user: User): Promise<void> {
     const query = `
-      INSERT INTO users (id, name, email)
-      VALUES ($1, $2, $3)
+      INSERT INTO users (name, email)
+      VALUES ($1, $2)
     `;
-    await postgresPool.query(query, [user.id, user.name, user.email]);
+    await postgresPool.query(query, [user.name, user.email]);
   }
 
   async findByEmail(email: string): Promise<User | null> {
