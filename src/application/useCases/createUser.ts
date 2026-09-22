@@ -3,7 +3,7 @@ import { IUserRepository } from '@domain/repositories/user.repository';
 import { AppError } from '@domain/errors/app.error';
 
 interface CreateUserDTO {
-  id: string;
+  id?: string;
   name: string;
   email: string;
 }

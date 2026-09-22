@@ -1,10 +1,9 @@
 import { ListUsersUseCase } from '@application/useCases/listUsers';
 import { CreateUserUseCase } from '@application/useCases/createUser';
 import { UserController } from '@infrastructure/http/controllers/user.controller';
-import { InMemoryUserRepository } from '@infrastructure/database/inMemoryUser.repository';
+import { PrismaUserRepository } from '@infrastructure/database/prisma/prismaUser.repository';
 
-// Repositório compartilhado (Singleton em memória durante o runtime)
-const userRepository = new InMemoryUserRepository();
+const userRepository = new PrismaUserRepository();
 
 export function makeUserController(): UserController {
   const listUsersUseCase = new ListUsersUseCase(userRepository);
