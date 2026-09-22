@@ -25,12 +25,14 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
     "prettier": "^3.9.6",
+    "prisma": "^6.19.3",
     "swagger-autogen": "^2.23.7",
     "tsc-alias": "^1.9.5",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "express": "^5.2.1",
     "pg": "^8.23.0",
     "swagger-ui-express": "^5.0.1"

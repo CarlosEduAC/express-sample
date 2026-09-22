@@ -1,150 +1,174 @@
-# Persistência de Dados Relacional com PostgreSQL
+# Persistência de Dados com Prisma ORM
 
-## Fundamentos da Persistência Relacional
+O Prisma ORM revoluciona a forma como construímos a camada de infraestrutura (especificamente o Repository) quando comparado ao uso de drivers nativos do PostgreSQL (como o pg).
 
-1. Por que abandonamos o "In-Memory"?
+## Por que adotar o Prisma ORM?
 
-No Módulo 1, usamos arrays JavaScript em memória (InMemoryUserRepository).
+### 1. A Evolução da Comunicação com Banco de Dados no Node.js
 
-* O problema: Toda vez que a API reinicia (npm run dev), os dados são apagados.
+```txt
 
-* A solução: Mover o estado da aplicação para um Sistema Gerenciador de Banco de Dados Relacional (SGBD) que grava as informações em disco de forma duradoura.
-
-1. O Padrão ACID no PostgreSQL
-
-O PostgreSQL é um banco relacional focado em conformidade e integridade:
-
-* A - Atomicidade: Uma transação é "tudo ou nada". Se falhar no meio, ocorre o rollback.
-
-* C - Consistência: Garante que o banco saia de um estado válido e chegue a outro estado válido respeitando as regras (chaves primárias, chaves estrangeiras).
-
-* I - Isolamento: Transações concorrentes não interferem umas nas outras antes de serem concluídas.
-
-* D - Durabilidade: Uma vez confirmada (commit), a alteração não é perdida mesmo se faltar energia no servidor.
-
-## Modelagem da Tabela de Usuários
-
-Antes de usar comandos SQL, definimos a estrutura relacional do nosso recurso de usuários:
-
-```sql
-
--- Tabela de Usuários no PostgreSQL
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
-  email VARCHAR(255) NOT NULL UNIQUE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+📜 Driver Nativo (pg)        🛠️ Query Builder (Knex)       ⚡ ORM Type-Safe (Prisma)
+ ──────────────────────       ──────────────────────       ─────────────────────────
+ • SQL puras em strings       • Construtor de queries      • Schema declarativo único
+ • Sem autocompletar          • Parcialmente tipado       • Tipagem 100% automatizada
+ • Erros só no runtime        • Migrations manuais         • Autocompletar no VS Code
 
 ```
 
-💡 Destaques de Arquitetura no Postgres:
+### 2. Os 3 Pilares do Ecossistema Prisma
 
-* UUID vs BIGINT: Usamos UUID em vez de IDS auto-incrementais (1, 2, 3...) para evitar previsibilidade de endpoints RESTful e facilitar arquitetura distribuída.
-* UNIQUE Constraint: Garante no nível do próprio banco que dois usuários não tenham o mesmo e-mail, agindo como segunda linha de defesa após os Casos de Uso.
+- Prisma Schema (schema.prisma): Arquivo único e declarativo onde definimos a conexão com o banco e os modelos (tabelas) da aplicação.
 
-## Conectando o Node.js ao Postgres
+- Prisma Migrate: Ferramenta que analisa o schema.prisma e gera arquivos SQL de migração versionados no Git, aplicando alterações estruturais no PostgreSQL de forma segura.
 
-Como a aplicação Node.js conversa com o PostgreSQL usando o driver oficial de baixo nível (pg), preparando o terreno pedagógico para entender o que o ORM resolverá na nossa próxima aula.
+- Prisma Client: Cliente de banco de dados gerado automaticamente a partir do seu schema. Ele fornece autocomplete exato dos campos e tipos no VS Code.
 
-### Passo 1: Instalar o Driver Nativo (pg) e os Tipos
+### 3. Tipagem Estática de Ponta a Ponta (End-to-End Type Safety)
+
+Quando usamos o driver pg com queries SQL puras, o TypeScript não sabe o que a query retorna. É necessário tipar manualmente o resultado (ex: result.rows as User[]), o que abre margem para erros em runtime caso a tabela mude.
+
+Com o Prisma: O Prisma analisa o schema.prisma e gera automaticamente os tipos no @prisma/client. Ao buscar um registro, o TypeScript infere exatamente os campos retornados com autocomplete nativo no VS Code.
+
+### 4. Migrations Declarativas e Versionadas
+
+Em vez de gerenciar scripts .sql manuais de CREATE TABLE ou ALTER TABLE:
+
+- O schema.prisma serve como a única fonte da verdade (Single Source of Truth).
+
+- O comando npx prisma migrate dev compara o seu schema com o banco de dados PostgreSQL, gera o SQL de migração e atualiza a estrutura do banco com histórico versionado no Git.
+
+### 5. Proteção Automática Contra SQL Injection
+
+Consultas construídas via interpolação de strings em drivers manuais são a maior causa de vulnerabilidade a SQL Injection. O Prisma traduz chamadas de métodos (como prisma.user.findUnique()) para queries parametrizadas nativas do PostgreSQL, garantindo segurança por padrão.
+
+### 4. Produtividade com Relações e Eager/Lazy Loading
+
+Trazer dados relacionados em SQL nativo exige o uso de JOINs complexos e o mapeamento manual do array plano (flat) retornado para um objeto aninhado.
+No Prisma, trazer o Treinador com seus Pokémons é tão simples quanto usar a propriedade include:
+
+```ts
+
+const trainerWithPokemons = await prisma.trainer.findUnique({
+  where: { id },
+  include: { pokemons: true }, // 👈 Traz os Pokémons associados em uma única chamada tipada
+});
+
+```
+
+### 5. Ferramentas Integradas (Prisma Studio)
+
+O Prisma possui o Prisma Studio (npx prisma studio), um painel gráfico que abre no navegador e permite visualizar, criar, editar e deletar dados do PostgreSQL sem precisar instalar softwares externos como DBeaver ou pgAdmin.
+
+## Live Coding: Mapeando o Módulo de Usuários
+
+### Passo 1: Instalação e Inicialização do Prisma
+
+No terminal do projeto, instale a CLI do Prisma como dependência de desenvolvimento e o Prisma Client como dependência de produção:
 
 ```bash
-npm install pg
-npm install --save-dev @types/pg
-```
 
-### Passo 2: Criar o Módulo de Conexão com o Pool (src/infrastructure/database/postgres/connection.ts)
-
-O Connection Pool gerencia e reutiliza conexões abertas com o PostgreSQL em vez de abrir e fechar uma conexão a cada requisição HTTP:
-
-```ts
-
-import { Pool } from 'pg';
-
-export const postgresPool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-// Teste inicial de comunicação com o banco de dados
-postgresPool.on('connect', () => {
-  console.log('🐘 [database]: Conexão com o PostgreSQL estabelecida com sucesso!');
-});
-
-postgresPool.on('error', (err) => {
-  console.error('💥 [database]: Erro inesperado no pool do PostgreSQL:', err);
-});
+npm install @prisma/client@6
+npm install -D prisma@6
 
 ```
 
-### Passo 3: Criar um Repositório Nativo em SQL (src/infrastructure/database/postgres/pgUser.repository.ts)
+Inicialize a estrutura do Prisma configurando o provedor do PostgreSQL:
 
-Implementamos a mesma interface IUserRepository do domínio, mas executando queries SQL puras:
+```bash
 
-```ts
+npx prisma init --datasource-provider postgresql
 
-// src/infrastructure/database/postgres/pg-user-repository.ts
-import { User } from '@domain/entities/user';
-import { IUserRepository } from '@domain/repositories/user-repository';
-import { postgresPool } from './connection';
+```
 
-export class PgUserRepository implements IUserRepository {
-  async create(user: User): Promise<void> {
-    const query = `
-      INSERT INTO users (id, name, email)
-      VALUES ($1, $2, $3)
-    `;
-    await postgresPool.query(query, [user.id, user.name, user.email]);
-  }
+> Esse comando criou a pasta prisma/ contendo o arquivo schema.prisma.
 
-  async findByEmail(email: string): Promise<User | null> {
-    const query = `SELECT id, name, email FROM users WHERE email = $1`;
-    const result = await postgresPool.query(query, [email]);
+### Passo 2: Configurando o prisma/schema.prisma
 
-    if (result.rows.length === 0) {
-      return null;
-    }
+Abra o arquivo prisma/schema.prisma e declare o modelo de dados para a nossa tabela de usuários:
 
-    const row = result.rows[0];
-    return new User({ id: row.id, name: row.name, email: row.email });
-  }
+```prisma
 
-  async findAll(): Promise<User[]> {
-    const query = `SELECT id, name, email FROM users`;
-    const result = await postgresPool.query(query);
+// prisma/schema.prisma
 
-    return result.rows.map((row) => new User({ id: row.id, name: row.name, email: row.email }));
-  }
+generator client {
+  provider = "prisma-client-js"
+}
 
-  async findById(id: string): Promise<User | null> {
-    const query = `SELECT id, name, email FROM users WHERE id = $1`;
-    const result = await postgresPool.query(query, [id]);
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
 
-    if (result.rows.length === 0) {
-      return null;
-    }
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
 
-    const row = result.rows[0];
-    return new User({ id: row.id, name: row.name, email: row.email });
-  }
+  @@map("users")
 }
 
 ```
 
-### Passo 4: Trocar a Injeção de Dependência na Factory (src/main/factories/make-user-controller.ts)
+### Passo 3: Criando e Executando a Primeira Migration
 
-Apenas alteramos uma linha na camada Main, sem encostar em nenhum Caso de Uso ou Controller!
+Gere a primeira migração de banco de dados. O Prisma lerá a estrutura do modelo User, criará a tabela users no PostgreSQL do Docker e gerará os tipos TypeScript automaticamente:
+
+```bash
+
+npx prisma migrate dev --name create-users-table
+
+```
+
+Obs: Caso já exista uma tabela com o mesmo nome, o Prisma exibirá um conflito. É necessário resolver o conflito ou resetar o banco de dados antes de aplicar a migração.
+
+```bash
+
+npx prisma migrate reset
+
+```
+
+![Conflito com a tabela existente](docs/images/image.png)
+![Reset realizado](docs/images/image-1.png)
+
+### Passo 4: Instanciando o Singleton do Prisma Client (src/infrastructure/database/prisma/client.ts)
+
+Para evitar estourar o limite de conexões do pool do PostgreSQL em modo de desenvolvimento, crie a instância centralizada do PrismaClient:
 
 ```ts
 
-import { PgUserRepository } from '@infrastructure/database/postgres/pg-user-repository'; // 👈 Mudou aqui!
+// src/infrastructure/database/prisma/client.ts
+import { PrismaClient } from '@prisma/client';
+
+export const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+});
+
+```
+
+### Passo 5: Implementando o PrismaUserRepository (src/infrastructure/database/prisma/prisma-user-repository.ts)
+
+Implementamos o repositório da infraestrutura conectando os Casos de Uso da Clean Architecture ao Prisma Client:
+
+[prismaUser.repository](./src/infrastructure/database/prisma/prisma-user-repository.ts)
+
+### Passo 6: Atualizando a Factory (src/main/factories/make-user-controller.ts)
+
+No arquivo de composição da camada Main, trocamos o PgUserRepository (SQL nativo) pelo novo PrismaUserRepository.
+
+Obs: Nenhuma regra de negócio ou arquivo da pasta application/ ou domain/ precisou ser modificado!
+
+```ts
+
+// src/main/factories/make-user-controller.ts
+import { PrismaUserRepository } from '@infrastructure/database/prisma/prisma-user-repository'; // 👈 Apenas essa troca
 import { CreateUserUseCase } from '@application/use-cases/create-user';
 import { ListUsersUseCase } from '@application/use-cases/list-users';
 import { GetUserByIdUseCase } from '@application/use-cases/get-user-by-id';
 import { UserController } from '@infrastructure/http/controllers/user-controller';
 
-// Agora injetamos a implementação que se conecta ao PostgreSQL real
-const userRepository = new PgUserRepository();
+const userRepository = new PrismaUserRepository();
 
 export function makeUserController(): UserController {
   const createUserUseCase = new CreateUserUseCase(userRepository);
@@ -155,3 +179,10 @@ export function makeUserController(): UserController {
 }
 
 ```
+
+### Observações
+
+- O Prisma eliminou o risco de errarmos o nome de uma coluna em uma string SQL. Se mudarmos o nome de um campo no schema.prisma, o TypeScript nos avisa na hora em qualquer arquivo do projeto que esteja usando aquele campo antigo!
+- A troca do PgUserRepository pelo PrismaUserRepository não impactou a camada de aplicação, mantendo a separação de responsabilidades e a integridade da Clean Architecture.
+- A utilização do Prisma Client centralizado como singleton ajuda a gerenciar eficientemente as conexões com o banco de dados, especialmente em ambiente de desenvolvimento.
+- Será necessário adicionar o comando `RUN npx prisma generate` no Dockerfile antes de compilar o projeto para garantir que o Prisma Client seja gerado corretamente [Dockerfile](Dockerfile).

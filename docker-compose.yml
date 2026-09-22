@@ -13,10 +13,11 @@ services:
     environment:
       - PORT=${PORT:-3333}
       - NODE_ENV=${NODE_ENV:-development}
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgresql://manager:password@postgres:5432/manager_db?schema=public
     volumes:
       # Volume de desenvolvimento: Espelha alterações de código em tempo real
       - ./src:/usr/src/app/src
+    command: sh -c "npx prisma migrate deploy && node dist/src/main/server.js"
     depends_on:
       postgres:
         condition: service_healthy
