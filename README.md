@@ -11,7 +11,7 @@ O Prisma ORM revoluciona a forma como construímos a camada de infraestrutura (e
 📜 Driver Nativo (pg)        🛠️ Query Builder (Knex)       ⚡ ORM Type-Safe (Prisma)
  ──────────────────────       ──────────────────────       ─────────────────────────
  • SQL puras em strings       • Construtor de queries      • Schema declarativo único
- • Sem autocompletar          • Parcialmente tipado       • Tipagem 100% automatizada
+ • Sem autocompletar          • Parcialmente tipado        • Tipagem 100% automatizada
  • Erros só no runtime        • Migrations manuais         • Autocompletar no VS Code
 
 ```
@@ -42,7 +42,7 @@ Em vez de gerenciar scripts .sql manuais de CREATE TABLE ou ALTER TABLE:
 
 Consultas construídas via interpolação de strings em drivers manuais são a maior causa de vulnerabilidade a SQL Injection. O Prisma traduz chamadas de métodos (como prisma.user.findUnique()) para queries parametrizadas nativas do PostgreSQL, garantindo segurança por padrão.
 
-### 4. Produtividade com Relações e Eager/Lazy Loading
+### 6. Produtividade com Relações e Eager/Lazy Loading
 
 Trazer dados relacionados em SQL nativo exige o uso de JOINs complexos e o mapeamento manual do array plano (flat) retornado para um objeto aninhado.
 No Prisma, trazer o Treinador com seus Pokémons é tão simples quanto usar a propriedade include:
@@ -56,7 +56,7 @@ const trainerWithPokemons = await prisma.trainer.findUnique({
 
 ```
 
-### 5. Ferramentas Integradas (Prisma Studio)
+### 7. Ferramentas Integradas (Prisma Studio)
 
 O Prisma possui o Prisma Studio (npx prisma studio), um painel gráfico que abre no navegador e permite visualizar, criar, editar e deletar dados do PostgreSQL sem precisar instalar softwares externos como DBeaver ou pgAdmin.
 
@@ -147,6 +147,8 @@ export const prisma = new PrismaClient({
 
 ```
 
+OBS: Rode o comando `npx prisma generate` sempre que houver alterações no schema.prisma para garantir que o Prisma Client esteja atualizado.
+
 ### Passo 5: Implementando o PrismaUserRepository (src/infrastructure/database/prisma/prisma-user-repository.ts)
 
 Implementamos o repositório da infraestrutura conectando os Casos de Uso da Clean Architecture ao Prisma Client:
@@ -186,3 +188,4 @@ export function makeUserController(): UserController {
 - A troca do PgUserRepository pelo PrismaUserRepository não impactou a camada de aplicação, mantendo a separação de responsabilidades e a integridade da Clean Architecture.
 - A utilização do Prisma Client centralizado como singleton ajuda a gerenciar eficientemente as conexões com o banco de dados, especialmente em ambiente de desenvolvimento.
 - Será necessário adicionar o comando `RUN npx prisma generate` no Dockerfile antes de compilar o projeto para garantir que o Prisma Client seja gerado corretamente [Dockerfile](Dockerfile).
+- E modificar o docker-compose para incluir o comando `npx prisma migrate deploy` antes de iniciar o servidor, garantindo que as migrações do Prisma sejam aplicadas corretamente [docker-compose.yml](docker-compose.yml).
