@@ -10,11 +10,17 @@ export function errorHandler(
 ) {
   // 1. Tratamento de erros conhecidos da aplicação (AppError)
   if (error instanceof AppError) {
-    return res.status(error.statusCode).json({
+    const responsePayload: Record<string, unknown> = {
       status: 'error',
       statusCode: error.statusCode,
       message: error.message,
-    });
+    };
+
+    if (error.details !== undefined && error.details !== null) {
+      responsePayload.details = error.details;
+    }
+
+    return res.status(error.statusCode).json(responsePayload);
   }
 
   // 2. Log interno para erros não mapeados (Crashes/Bugs de runtime)

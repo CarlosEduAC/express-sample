@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { makeUserController } from '@main/factories/makeUserController.factory';
+import { validateRequest } from '../middlewares/validateRequest';
+import { createUserSchema, getUserByIdSchema } from '../schemas/user.schema';
 
 const userRoutes = Router();
 const userController = makeUserController();
@@ -29,8 +31,11 @@ userRoutes.get('/', (req, res) => {
   return userController.list(req, res);
 });
 
-userRoutes.post('/', (req, res) => {
-  /*
+userRoutes.post(
+  '/',
+  validateRequest({ body: createUserSchema }),
+  (req, res) => {
+    /*
     #swagger.tags = ['Users']
     #swagger.summary = 'Cria um novo usuário'
     #swagger.requestBody = {
@@ -64,7 +69,46 @@ userRoutes.post('/', (req, res) => {
       }
     }
   */
-  return userController.create(req, res);
-});
+    return userController.create(req, res);
+  },
+);
+
+userRoutes.get(
+  '/:id',
+  validateRequest({ params: getUserByIdSchema }),
+  (req, res, next) => {
+    /*
+    #swagger.tags = ['Users']
+    #swagger.summary = 'Busca um usuário pelo ID'
+    #swagger.parameters['id'] = {
+      description: 'ID do usuário',
+      required: true,
+      type: 'string'
+    }
+    #swagger.responses[200] = {
+      description: 'Usuário encontrado com sucesso.',
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              data: { $ref: '#/components/schemas/User' }
+            }
+          }
+        }
+      }
+    }
+    #swagger.responses[404] = {
+      description: 'Usuário não encontrado.',
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+        }
+      }
+    }
+    */
+    return userController.getById(req, res, next);
+  },
+);
 
 export { userRoutes };

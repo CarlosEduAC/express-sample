@@ -1,191 +1,246 @@
-# Persistência de Dados com Prisma ORM
+# Validação dos Dados de Entrada com Zod
 
-O Prisma ORM revoluciona a forma como construímos a camada de infraestrutura (especificamente o Repository) quando comparado ao uso de drivers nativos do PostgreSQL (como o pg).
+Em sistemas de software, dados malformados, maliciosos ou ausentes são a causa nº 1 de falhas em tempo de execução (runtime errors), vazamentos de dados e corrupção de estado de banco de dados.
 
-## Por que adotar o Prisma ORM?
+Quando não validamos os dados de entrada logo na borda da aplicação (na camada de transporte HTTP), abrimos espaço para três grandes categorias de problemas:
 
-### 1. A Evolução da Comunicação com Banco de Dados no Node.js
+1. Exceções Não Tratadas no Core da Aplicação: Uma string enviada onde se esperava um número causará um erro ao tentar executar operações matemáticas no Use Case, derrubando a requisição com um erro genérico 500 Internal Server Error.
+
+2. Poluição e Corrupção de Dados: Salvar registros com strings de espaço em branco ("   "), e-mails sem @ ou valores fora de limites operacionais exige limpezas caras no banco de dados posteriormente.
+
+3. Brechas de Segurança: Sem higienização de payload, o sistema fica exposto a ataques como Injection (SQL, NoSQL, Command Injection) e Mass Assignment (quando o cliente envia campos internos como isAdmin: true no corpo do JSON e o servidor aceita sem filtrar).
+
+## Validação na Borda da Aplicação
+
+1. O Princípio Fail-Fast (Falhe Rápido)
+
+O princípio Fail-Fast afirma que um sistema deve interromper imediatamente a execução de uma operação ao primeiro sinal de que o dado está incorreto, devolvendo o controle com feedback claro ao chamador.
 
 ```txt
 
-📜 Driver Nativo (pg)        🛠️ Query Builder (Knex)       ⚡ ORM Type-Safe (Prisma)
- ──────────────────────       ──────────────────────       ─────────────────────────
- • SQL puras em strings       • Construtor de queries      • Schema declarativo único
- • Sem autocompletar          • Parcialmente tipado        • Tipagem 100% automatizada
- • Erros só no runtime        • Migrations manuais         • Autocompletar no VS Code
+❌ SEM FAIL-FAST:
+[ HTTP Request ] ──(Payload Inválido)──> [ Express Route ] ──> [ Controller ] ──> [ Use Case ] ──> [ Database Error 💥 ]
+
+✅ COM FAIL-FAST (Zod Middleware):
+[ HTTP Request ] ──(Payload Inválido)──> [ Zod Middleware ] ──X (Interrompe e retorna Status 400 em milissegundos)
 
 ```
 
-### 2. Os 3 Pilares do Ecossistema Prisma
+Na Clean Architecture, a camada de Infraestrutura / HTTP serve como barreira. Nenhum dado malformado (e-mail sem @, nome muito curto, IDs inválidos) deve chegar aos Use Cases ou às Entidades de Domínio.
 
-- Prisma Schema (schema.prisma): Arquivo único e declarativo onde definimos a conexão com o banco e os modelos (tabelas) da aplicação.
+```txt
 
-- Prisma Migrate: Ferramenta que analisa o schema.prisma e gera arquivos SQL de migração versionados no Git, aplicando alterações estruturais no PostgreSQL de forma segura.
+🌐 Client Request (HTTP)
+        │
+        ▼
+ 🛡️  Zod Middleware (Fail-Fast: Rejeita dados inválidos com Status 400 antes do Controller)
+        │ (Somente dados 100% validados passam)
+        ▼
+ 🎮 UserController
+        │
+        ▼
+ ⚙️  CreateUserUseCase (Camada de Aplicação)
 
-- Prisma Client: Cliente de banco de dados gerado automaticamente a partir do seu schema. Ele fornece autocomplete exato dos campos e tipos no VS Code.
+```
 
-### 3. Tipagem Estática de Ponta a Ponta (End-to-End Type Safety)
+Benefícios do Fail-Fast na Prática:
 
-Quando usamos o driver pg com queries SQL puras, o TypeScript não sabe o que a query retorna. É necessário tipar manualmente o resultado (ex: result.rows as User[]), o que abre margem para erros em runtime caso a tabela mude.
+- Economia de Recursos: Evita alocar memória, abrir conexões de banco de dados ou chamar APIs externas caras para requisições que já nasceram erradas.
 
-Com o Prisma: O Prisma analisa o schema.prisma e gera automaticamente os tipos no @prisma/client. Ao buscar um registro, o TypeScript infere exatamente os campos retornados com autocomplete nativo no VS Code.
+- Feedback Instantâneo: Retorna ao cliente do front-end/mobile uma resposta padronizada de status 400 Bad Request indicando exatamente qual campo falhou e por quê.
 
-### 4. Migrations Declarativas e Versionadas
+- Previsibilidade: Garante que o código interno das camadas de Aplicação e Domínio sempre receberá dados no formato perfeito e esperado.
 
-Em vez de gerenciar scripts .sql manuais de CREATE TABLE ou ALTER TABLE:
+## Validação de Borda vs. Regras de Negócio de Domínio
 
-- O schema.prisma serve como a única fonte da verdade (Single Source of Truth).
+É muito comum confundirmos Validação de Entrada (Schema Validation) com Regras de Negócio de Domínio. Definir essa fronteira é essencial para manter a Clean Architecture limpa:
 
-- O comando npx prisma migrate dev compara o seu schema com o banco de dados PostgreSQL, gera o SQL de migração e atualiza a estrutura do banco com histórico versionado no Git.
+| Característica    | Validação de Entrada (Borda - Zod)                                                     | Regra de Negócio (Domínio / Use Case)                                                                                |
+| ----------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| O que analisa?    | O formato e a sintaxe da estrutura dos dados.                                          | O significado e o estado dos dados no sistema.                                                                       |
+| Exemplos          | • O campo email é uma string válida com @? • O campo age é um número inteiro $\ge 18$? | • Este e-mail já pertence a outro usuário cadastrado no banco? • O usuário tem saldo suficiente para esta transação? |
+| Depende do Banco? | Nunca. É uma checagem puramente em memória (stateless).                                | Frequentemente. Precisa consultar o estado atual do sistema via Repositories.                                        |
+| Onde reside?      | Camada de Infraestrutura / HTTP (Middlewares/Schemas).                                 | Camada de Domínio e Casos de Uso (Entities/Use Cases).                                                               |
 
-### 5. Proteção Automática Contra SQL Injection
+**Regra de Ouro:** Se a checagem precisa consultar o banco de dados para responder se o dado é válido, ela NÃO é uma validação do Zod; ela é uma Regra de Negócio do Caso de Uso!
 
-Consultas construídas via interpolação de strings em drivers manuais são a maior causa de vulnerabilidade a SQL Injection. O Prisma traduz chamadas de métodos (como prisma.user.findUnique()) para queries parametrizadas nativas do PostgreSQL, garantindo segurança por padrão.
+Eu consigo validar isso em memória, de forma isolada, SEM consultar o banco de dados ou um serviço externo?
 
-### 6. Produtividade com Relações e Eager/Lazy Loading
+- SIM: É Validação de Borda -> Zod Schema (Middleware).
+- NÃO: É Regra de Negócio -> Use Case / Entidade de Domínio.
 
-Trazer dados relacionados em SQL nativo exige o uso de JOINs complexos e o mapeamento manual do array plano (flat) retornado para um objeto aninhado.
-No Prisma, trazer o Treinador com seus Pokémons é tão simples quanto usar a propriedade include:
+**Exemplos Usuários (Auth / Management):**
+
+| Ação         | 🛡️ Validação de Borda (Zod)                                                                                  | ⚙️ Regra de Negócio (Domínio)                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| E-mail       | O valor enviado é uma string no formato sintático válido? (ex: tem @, possui domínio, sem espaços).         | O e-mail informado já existe cadastrado no banco de dados?                   |
+| Senha        | A senha atinge a complexidade mínima? (mínimo de 8 caracteres, pelo menos 1 número e 1 caractere especial). | A senha atual informada confere com o hash criptografado salvo no banco?     |
+| Idade / Data | O campo birthDate é uma data válida no padrão ISO 8601 (YYYY-MM-DD)?                                        | O usuário tem pelo menos 18 anos completos para acessar esta funcionalidade? |
+
+## Por que escolher o Zod no ecossistema TypeScript?
+
+Existem bibliotecas tradicionais como Joi e Yup, mas o Zod tornou-se o padrão da indústria no ecossistema Node.js/TypeScript pelos seguintes motivos:
+
+### A. Single Source of Truth (Fonte Única de Verdade)
+
+Sem o Zod, o desenvolvedor precisa criar um tipo/interface TypeScript E uma regra de validação separada:
 
 ```ts
 
-const trainerWithPokemons = await prisma.trainer.findUnique({
-  where: { id },
-  include: { pokemons: true }, // 👈 Traz os Pokémons associados em uma única chamada tipada
+// ❌ Sem Zod: Duplicidade e risco de dessincronização
+interface CreateUserBody {
+  name: string;
+  age: number;
+}
+// E em outro arquivo, escrever a validação manual...
+
+```
+
+Com o Zod, o Schema em tempo de execução gera a tipagem em tempo de compilação automaticamente:
+
+```ts
+
+// ✅ Com Zod: Schema + Tipo estático unificados
+export const createUserSchema = z.object({
+  name: z.string().min(3),
+  age: z.number().min(18),
 });
 
+// O TypeScript infere a interface automaticamente a partir do Schema!
+export type CreateUserDTO = z.infer<typeof createUserSchema>;
+
 ```
 
-### 7. Ferramentas Integradas (Prisma Studio)
+### B. Mutações e Higienização Transparente (Parsing & Transformation)
 
-O Prisma possui o Prisma Studio (npx prisma studio), um painel gráfico que abre no navegador e permite visualizar, criar, editar e deletar dados do PostgreSQL sem precisar instalar softwares externos como DBeaver ou pgAdmin.
+O Zod não se limita a validar dados (valid: true/false); ele os higieniza e transforma no mesmo passo:
 
-## Live Coding: Mapeando o Módulo de Usuários
+- trim(): Remove espaços em branco desnecessários das pontas.
 
-### Passo 1: Instalação e Inicialização do Prisma
+- toLowerCase(): Padroniza e-mails antes de chegarem à camada de uso.
 
-No terminal do projeto, instale a CLI do Prisma como dependência de desenvolvimento e o Prisma Client como dependência de produção:
+- coerce / transform(): Converte automaticamente query strings como "page=2" (string) para o número 2 antes de entregar o valor para a aplicação.
+
+## Live Coding: Validação de Usuários
+
+### Passo 0: Ajustes no app.error.ts e erroHandler.ts
+
+Antes de iniciar a validação com Zod, ajustamos o `AppError` para suportar detalhes adicionais e o `errorHandler` para retornar esses detalhes na resposta HTTP.
+
+[app.error.ts](src/domain/errors/app.error.ts)
+[errorHandler.ts](src/infrastructure/http/middlewares/errorHandler.ts)
+
+### Passo 1: Instalação do Zod
+
+No terminal do projeto:
 
 ```bash
 
-npm install @prisma/client@6
-npm install -D prisma@6
+npm install zod
 
 ```
 
-Inicialize a estrutura do Prisma configurando o provedor do PostgreSQL:
+### Passo 2: Criando o Middleware Genérico de Validação (src/infrastructure/http/middlewares/validate-request.ts)
 
-```bash
-
-npx prisma init --datasource-provider postgresql
-
-```
-
-> Esse comando criou a pasta prisma/ contendo o arquivo schema.prisma.
-
-### Passo 2: Configurando o prisma/schema.prisma
-
-Abra o arquivo prisma/schema.prisma e declare o modelo de dados para a nossa tabela de usuários:
-
-```prisma
-
-// prisma/schema.prisma
-
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("users")
-}
-
-```
-
-### Passo 3: Criando e Executando a Primeira Migration
-
-Gere a primeira migração de banco de dados. O Prisma lerá a estrutura do modelo User, criará a tabela users no PostgreSQL do Docker e gerará os tipos TypeScript automaticamente:
-
-```bash
-
-npx prisma migrate dev --name create-users-table
-
-```
-
-Obs: Caso já exista uma tabela com o mesmo nome, o Prisma exibirá um conflito. É necessário resolver o conflito ou resetar o banco de dados antes de aplicar a migração.
-
-```bash
-
-npx prisma migrate reset
-
-```
-
-![Conflito com a tabela existente](docs/images/image.png)
-![Reset realizado](docs/images/image-1.png)
-
-### Passo 4: Instanciando o Singleton do Prisma Client (src/infrastructure/database/prisma/client.ts)
-
-Para evitar estourar o limite de conexões do pool do PostgreSQL em modo de desenvolvimento, crie a instância centralizada do PrismaClient:
+Este middleware aceita schemas para body, query e params, validando o payload antes de repassá-lo ao Controller.
 
 ```ts
 
-// src/infrastructure/database/prisma/client.ts
-import { PrismaClient } from '@prisma/client';
+import { Request, Response, NextFunction } from 'express';
+import { ZodSchema, ZodError } from 'zod';
+import { AppError } from '@domain/errors/app-error';
 
-export const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+interface RequestValidationSchemas {
+  body?: ZodSchema;
+  query?: ZodSchema;
+  params?: ZodSchema;
+}
+
+export const validateRequest = (schemas: RequestValidationSchemas) => {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (schemas.body) {
+        req.body = await schemas.body.parseAsync(req.body);
+      }
+      if (schemas.query) {
+        req.query = await schemas.query.parseAsync(req.query);
+      }
+      if (schemas.params) {
+        req.params = await schemas.params.parseAsync(req.params);
+      }
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        // Formata os erros do Zod para exibição no AppError
+        const issueDetails = error.issues.map((issue) => ({
+          field: issue.path.join('.'),
+          message: issue.message,
+        }));
+
+        return next(new AppError('Dados de entrada inválidos', 400, issueDetails));
+      }
+      next(error);
+    }
+  };
+};
+
+```
+
+### Passo 3: Criando os Schemas de Usuário (src/infrastructure/http/schemas/user-schemas.ts)
+
+Definimos as regras de entrada para Criação e Busca por ID de Usuários:
+
+```ts
+
+import { z } from 'zod';
+
+export const createUserSchema = z.object({
+  name: z
+    .string({ required_error: 'O nome é obrigatório' })
+    .min(3, 'O nome deve ter no mínimo 3 caracteres')
+    .trim(),
+  email: z
+    .string({ required_error: 'O e-mail é obrigatório' })
+    .email('Formato de e-mail inválido')
+    .toLowerCase(),
 });
 
+export const getUserByIdSchema = z.object({
+  id: z.string().uuid('O ID do usuário deve ser um UUID válido'),
+});
+
+// Inferência automática de tipos TypeScript a partir dos schemas Zod
+export type CreateUserDTO = z.infer<typeof createUserSchema>;
+export type GetUserByIdParams = z.infer<typeof getUserByIdSchema>;
+
 ```
 
-OBS: Rode o comando `npx prisma generate` sempre que houver alterações no schema.prisma para garantir que o Prisma Client esteja atualizado.
+### Passo 4: Acoplando o Middleware às Rotas de Usuário (src/infrastructure/http/routes/user-routes.ts)
 
-### Passo 5: Implementando o PrismaUserRepository (src/infrastructure/database/prisma/prisma-user-repository.ts)
-
-Implementamos o repositório da infraestrutura conectando os Casos de Uso da Clean Architecture ao Prisma Client:
-
-[prismaUser.repository](./src/infrastructure/database/prisma/prisma-user-repository.ts)
-
-### Passo 6: Atualizando a Factory (src/main/factories/make-user-controller.ts)
-
-No arquivo de composição da camada Main, trocamos o PgUserRepository (SQL nativo) pelo novo PrismaUserRepository.
-
-Obs: Nenhuma regra de negócio ou arquivo da pasta application/ ou domain/ precisou ser modificado!
+Injetamos o middleware diretamente nas rotas HTTP do Express:
 
 ```ts
 
-// src/main/factories/make-user-controller.ts
-import { PrismaUserRepository } from '@infrastructure/database/prisma/prisma-user-repository'; // 👈 Apenas essa troca
-import { CreateUserUseCase } from '@application/use-cases/create-user';
-import { ListUsersUseCase } from '@application/use-cases/list-users';
-import { GetUserByIdUseCase } from '@application/use-cases/get-user-by-id';
-import { UserController } from '@infrastructure/http/controllers/user-controller';
+import { Router } from 'express';
+import { validateRequest } from '../middlewares/validate-request';
+import { createUserSchema, getUserByIdSchema } from '../schemas/user-schemas';
+import { makeUserController } from '@main/factories/make-user-controller';
 
-const userRepository = new PrismaUserRepository();
+const userRoutes = Router();
+const userController = makeUserController();
 
-export function makeUserController(): UserController {
-  const createUserUseCase = new CreateUserUseCase(userRepository);
-  const listUsersUseCase = new ListUsersUseCase(userRepository);
-  const getUserByIdUseCase = new GetUserByIdUseCase(userRepository);
+userRoutes.post(
+  '/',
+  validateRequest({ body: createUserSchema }),
+  (req, res, next) => userController.create(req, res, next)
+);
 
-  return new UserController(createUserUseCase, listUsersUseCase, getUserByIdUseCase);
-}
+userRoutes.get(
+  '/:id',
+  validateRequest({ params: getUserByIdSchema }),
+  (req, res, next) => userController.getById(req, res, next)
+);
+
+export { userRoutes };
 
 ```
-
-### Observações
-
-- O Prisma eliminou o risco de errarmos o nome de uma coluna em uma string SQL. Se mudarmos o nome de um campo no schema.prisma, o TypeScript nos avisa na hora em qualquer arquivo do projeto que esteja usando aquele campo antigo!
-- A troca do PgUserRepository pelo PrismaUserRepository não impactou a camada de aplicação, mantendo a separação de responsabilidades e a integridade da Clean Architecture.
-- A utilização do Prisma Client centralizado como singleton ajuda a gerenciar eficientemente as conexões com o banco de dados, especialmente em ambiente de desenvolvimento.
-- Será necessário adicionar o comando `RUN npx prisma generate` no Dockerfile antes de compilar o projeto para garantir que o Prisma Client seja gerado corretamente [Dockerfile](Dockerfile).
-- E modificar o docker-compose para incluir o comando `npx prisma migrate deploy` antes de iniciar o servidor, garantindo que as migrações do Prisma sejam aplicadas corretamente [docker-compose.yml](docker-compose.yml).
