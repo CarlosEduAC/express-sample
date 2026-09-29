@@ -1,246 +1,373 @@
-# Validação dos Dados de Entrada com Zod
+# Tratamento Global de Erros de Infraestrutura
 
-Em sistemas de software, dados malformados, maliciosos ou ausentes são a causa nº 1 de falhas em tempo de execução (runtime errors), vazamentos de dados e corrupção de estado de banco de dados.
+## Por Que Estruturar um Tratamento Global de Erros?
 
-Quando não validamos os dados de entrada logo na borda da aplicação (na camada de transporte HTTP), abrimos espaço para três grandes categorias de problemas:
+Em sistemas distribuídos e APIs REST em produção, exceções vão acontecer. A diferença entre um sistema frágil e um resiliente está em como a aplicação lida com essas exceções quando elas ocorrem.
 
-1. Exceções Não Tratadas no Core da Aplicação: Uma string enviada onde se esperava um número causará um erro ao tentar executar operações matemáticas no Use Case, derrubando a requisição com um erro genérico 500 Internal Server Error.
+Sem um tratamento global centralizado, a aplicação sofre de três problemas graves:
 
-2. Poluição e Corrupção de Dados: Salvar registros com strings de espaço em branco ("   "), e-mails sem @ ou valores fora de limites operacionais exige limpezas caras no banco de dados posteriormente.
+1. Vazamento de Informações Sensíveis (Information Disclosure):
 
-3. Brechas de Segurança: Sem higienização de payload, o sistema fica exposto a ataques como Injection (SQL, NoSQL, Command Injection) e Mass Assignment (quando o cliente envia campos internos como isAdmin: true no corpo do JSON e o servidor aceita sem filtrar).
+Exibir o stack trace nativo do Node.js ou queries SQL cruas revela a estrutura do banco de dados, nomes de tabelas e versões de pacotes para possíveis atacantes.
 
-## Validação na Borda da Aplicação
+2. Inconsistência de Contrato no Front-end:
 
-1. O Princípio Fail-Fast (Falhe Rápido)
+Se o Zod responde de um jeito ({ issues: [...] }), a regra de negócio de outro ({ error: "Mensagem" }) e o Express de outro (<pre>Cannot POST /...</pre>), a equipe de Front-end/Mobile é obrigada a escrever dezenas de if/else apenas para tratar erros.
 
-O princípio Fail-Fast afirma que um sistema deve interromper imediatamente a execução de uma operação ao primeiro sinal de que o dado está incorreto, devolvendo o controle com feedback claro ao chamador.
+3. Queda do Processo Node.js (Uncaught Exceptions):
 
-```txt
+Promessas rejeitadas (Unhandled Rejections) que não são capturadas por um middleware na borda podem travar o evento loop ou derrubar a instância da aplicação no container Docker.
 
-❌ SEM FAIL-FAST:
-[ HTTP Request ] ──(Payload Inválido)──> [ Express Route ] ──> [ Controller ] ──> [ Use Case ] ──> [ Database Error 💥 ]
+## A Taxonomia dos Erros na Clean Architecture
 
-✅ COM FAIL-FAST (Zod Middleware):
-[ HTTP Request ] ──(Payload Inválido)──> [ Zod Middleware ] ──X (Interrompe e retorna Status 400 em milissegundos)
-
-```
-
-Na Clean Architecture, a camada de Infraestrutura / HTTP serve como barreira. Nenhum dado malformado (e-mail sem @, nome muito curto, IDs inválidos) deve chegar aos Use Cases ou às Entidades de Domínio.
+Para projetar um sistema elegante, precisamos categorizar os erros de acordo com a camada de origem e a sua natureza operacional:
 
 ```txt
 
-🌐 Client Request (HTTP)
-        │
-        ▼
- 🛡️  Zod Middleware (Fail-Fast: Rejeita dados inválidos com Status 400 antes do Controller)
-        │ (Somente dados 100% validados passam)
-        ▼
- 🎮 UserController
-        │
-        ▼
- ⚙️  CreateUserUseCase (Camada de Aplicação)
+                                ┌──────────────────────────┐
+                                │   Requisição HTTP (API)  │
+                                └────────────┬─────────────┘
+                                             │
+                       ┌─────────────────────┴─────────────────────┐
+                       ▼                                           ▼
+          [ Erros Operacionais (4xx) ]               [ Erros de Sistema / Bugs (500) ]
+        Previsíveis e esperados no fluxo             Inesperados, falhas de infra
+                       │                                           │
+      ┌────────────────┼────────────────┐                          │
+      ▼                ▼                ▼                          ▼
+Erros de Borda    Erros de Domínio   Erros de Infra         Erros Não Tratados
+(Sintaxe / Zod)   (Regras / State)   (Prisma / Driver)      (NullPointer, Crash)
 
 ```
 
-Benefícios do Fail-Fast na Prática:
+### A. Erros Operacionais (Status HTTP 4xx)
 
-- Economia de Recursos: Evita alocar memória, abrir conexões de banco de dados ou chamar APIs externas caras para requisições que já nasceram erradas.
+São exceções previsíveis que fazem parte do fluxo normal da aplicação. Ocorrem quando o cliente envia dados incorretos ou tenta realizar uma ação não permitida pelas regras de negócio.
 
-- Feedback Instantâneo: Retorna ao cliente do front-end/mobile uma resposta padronizada de status 400 Bad Request indicando exatamente qual campo falhou e por quê.
+Exemplos: E-mail já cadastrado, saldo insuficiente, token expirado, ID inexistente.
 
-- Previsibilidade: Garante que o código interno das camadas de Aplicação e Domínio sempre receberá dados no formato perfeito e esperado.
+Comportamento Esperado: Não devem poluir os logs de erro crítico do servidor (nível ERROR). Devem responder imediatamente com um código HTTP apropriado (400, 401, 403, 404, 409) e orientar o usuário sobre como corrigir.
 
-## Validação de Borda vs. Regras de Negócio de Domínio
+### B. Erros de Sistema / Não Operacionais (Status HTTP 500)
 
-É muito comum confundirmos Validação de Entrada (Schema Validation) com Regras de Negócio de Domínio. Definir essa fronteira é essencial para manter a Clean Architecture limpa:
+São falhas inesperadas causadas por bugs de código, indisponibilidade do banco de dados, falta de memória ou falha de rede com serviços externos.
 
-| Característica    | Validação de Entrada (Borda - Zod)                                                     | Regra de Negócio (Domínio / Use Case)                                                                                |
-| ----------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| O que analisa?    | O formato e a sintaxe da estrutura dos dados.                                          | O significado e o estado dos dados no sistema.                                                                       |
-| Exemplos          | • O campo email é uma string válida com @? • O campo age é um número inteiro $\ge 18$? | • Este e-mail já pertence a outro usuário cadastrado no banco? • O usuário tem saldo suficiente para esta transação? |
-| Depende do Banco? | Nunca. É uma checagem puramente em memória (stateless).                                | Frequentemente. Precisa consultar o estado atual do sistema via Repositories.                                        |
-| Onde reside?      | Camada de Infraestrutura / HTTP (Middlewares/Schemas).                                 | Camada de Domínio e Casos de Uso (Entities/Use Cases).                                                               |
+Exemplos: Cannot read property 'name' of undefined, perda da conexão com o PostgreSQL, falha no parse de um arquivo JSON corrompido.
 
-**Regra de Ouro:** Se a checagem precisa consultar o banco de dados para responder se o dado é válido, ela NÃO é uma validação do Zod; ela é uma Regra de Negócio do Caso de Uso!
+Comportamento Esperado: Devem ser registrados em ferramentas de observabilidade (Sentry, Datadog) em nível ERROR com o stack trace completo. Para o cliente público, o servidor deve retornar apenas uma mensagem genérica: "Erro interno do servidor".
 
-Eu consigo validar isso em memória, de forma isolada, SEM consultar o banco de dados ou um serviço externo?
+## A Hierarquia de Domínio: Expandindo o AppError
 
-- SIM: É Validação de Borda -> Zod Schema (Middleware).
-- NÃO: É Regra de Negócio -> Use Case / Entidade de Domínio.
+Na Clean Architecture, a camada de Domínio não deve conhecer bibliotecas HTTP (Express) nem ORMs (Prisma). No entanto, para que o sistema consiga traduzir os erros de negócio em respostas HTTP sem acoplamento, estruturamos uma hierarquia de exceções de domínio.
 
-**Exemplos Usuários (Auth / Management):**
+A classe base AppError serve de fundação para erros operacionais especializados:
 
-| Ação         | 🛡️ Validação de Borda (Zod)                                                                                  | ⚙️ Regra de Negócio (Domínio)                                                 |
-| ------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| E-mail       | O valor enviado é uma string no formato sintático válido? (ex: tem @, possui domínio, sem espaços).         | O e-mail informado já existe cadastrado no banco de dados?                   |
-| Senha        | A senha atinge a complexidade mínima? (mínimo de 8 caracteres, pelo menos 1 número e 1 caractere especial). | A senha atual informada confere com o hash criptografado salvo no banco?     |
-| Idade / Data | O campo birthDate é uma data válida no padrão ISO 8601 (YYYY-MM-DD)?                                        | O usuário tem pelo menos 18 anos completos para acessar esta funcionalidade? |
+```txt
 
-## Por que escolher o Zod no ecossistema TypeScript?
+                             ┌───────────────────┐
+                             │     AppError      │ (Abstract/Base Class)
+                             └─────────┬─────────┘
+                                       │
+      ┌──────────────────┬─────────────┼─────────────┬──────────────────┐
+      ▼                  ▼             ▼             ▼                  ▼
+NotFoundError     ConflictError   ValidationError  UnauthorizedError  ForbiddenError
+   (404)              (409)          (400)               (401)             (403)
 
-Existem bibliotecas tradicionais como Joi e Yup, mas o Zod tornou-se o padrão da indústria no ecossistema Node.js/TypeScript pelos seguintes motivos:
+```
 
-### A. Single Source of Truth (Fonte Única de Verdade)
+### Por que especializar as classes de erro de Domínio?
 
-Sem o Zod, o desenvolvedor precisa criar um tipo/interface TypeScript E uma regra de validação separada:
+1. Semântica Clara no Use Case: O Use Case lança throw new NotFoundError('Usuário não encontrado') ou throw new ConflictError('E-mail já está em uso') em vez de hardcodear códigos HTTP numéricos soltos (404, 409).
+
+2. Desacoplamento do Protocolo: A camada de aplicação sinaliza o que aconteceu de errado conceitualmente, enquanto o errorHandler na borda (Infraestrutura) decide a tradução para o protocolo HTTP.
+
+## O Funcionamento do Funil (Middleware Global)
+
+O errorHandler no Express atua como o ponto central de convergência (Single Point of Failure Handler). No Express, qualquer middleware que receba exatamente 4 parâmetros (error, req, res, next) é reconhecido como o manipulador global de exceções.
+
+A Ordem de Processamento no Funil:
+
+1. Checagem de AppError (Domínio/Aplicação):
+
+Se o erro for uma instância de AppError (ou de suas filhas NotFoundError, ConflictError), o middleware extrai a mensagem, o status code configurado e os detalhes operacionais, retornando imediatamente.
+
+2. Checagem de ZodError (Borda / Validação):
+
+Se uma exceção do Zod escapou ou foi repassada pelo middleware de validação, o funil a captura, formata a lista de campos inválidos e responde com 400 Bad Request.
+
+3. Checagem de PrismaClientKnownRequestError (Infraestrutura):
+
+Se o repositório tentou executar uma query que violou restrições do banco (ex: chave única P2002 ou registro inexistente P2025), o PrismaErrorMapper intercepta e traduz o código do banco em uma mensagem de domínio legível.
+
+4. Fallback do Desenvolvedor (Erro Inesperado - 500):
+
+Se o erro não se encaixar em nenhuma das categorias acima, significa que é um bug de código ou uma falha física de infraestrutura. O middleware registra o erro no console/logger e responde com 500 Internal Server Error, mascarando os detalhes internos.
+
+### Hierarquia e Mapeamento de Erros no Funil HTTP
+
+```txt
+
+             🌐 Requisição HTTP
+                      │
+                      ▼
+ ┌──────────────────────────────────────────┐
+ │         Middleware Global de Erros       │
+ └────────────────────┬─────────────────────┘
+                      │
+   ┌──────────────────┼──────────────────┬──────────────────┐
+   │ (Instância de)   │ (Instância de)   │ (Instância de)   │ (Outros Erros)
+   ▼                  ▼                  ▼                  ▼
+AppError           ZodError        PrismaError        Error Generico
+   │                  │                  │                  │
+ 400/404/409        400 Bad            Mapeado para        500 Internal
+ Operacional        Request            AppError (409/404)  Server Error
+ (Regra/Borda)      (Borda)            (Infraestrutura)   (Log do Sistema)
+
+```
+
+## Refatoração Prática da Hierarquia de Erros de Domínio
+
+1. Atualizando a Classe Base AppError (src/domain/errors/app-error.ts)
 
 ```ts
 
-// ❌ Sem Zod: Duplicidade e risco de dessincronização
-interface CreateUserBody {
-  name: string;
-  age: number;
-}
-// E em outro arquivo, escrever a validação manual...
+// src/domain/errors/app-error.ts
+export abstract class AppError {
+  public readonly message: string;
+  public readonly statusCode: number;
+  public readonly details?: unknown;
 
-```
-
-Com o Zod, o Schema em tempo de execução gera a tipagem em tempo de compilação automaticamente:
-
-```ts
-
-// ✅ Com Zod: Schema + Tipo estático unificados
-export const createUserSchema = z.object({
-  name: z.string().min(3),
-  age: z.number().min(18),
-});
-
-// O TypeScript infere a interface automaticamente a partir do Schema!
-export type CreateUserDTO = z.infer<typeof createUserSchema>;
-
-```
-
-### B. Mutações e Higienização Transparente (Parsing & Transformation)
-
-O Zod não se limita a validar dados (valid: true/false); ele os higieniza e transforma no mesmo passo:
-
-- trim(): Remove espaços em branco desnecessários das pontas.
-
-- toLowerCase(): Padroniza e-mails antes de chegarem à camada de uso.
-
-- coerce / transform(): Converte automaticamente query strings como "page=2" (string) para o número 2 antes de entregar o valor para a aplicação.
-
-## Live Coding: Validação de Usuários
-
-### Passo 0: Ajustes no app.error.ts e erroHandler.ts
-
-Antes de iniciar a validação com Zod, ajustamos o `AppError` para suportar detalhes adicionais e o `errorHandler` para retornar esses detalhes na resposta HTTP.
-
-[app.error.ts](src/domain/errors/app.error.ts)
-[errorHandler.ts](src/infrastructure/http/middlewares/errorHandler.ts)
-
-### Passo 1: Instalação do Zod
-
-No terminal do projeto:
-
-```bash
-
-npm install zod
-
-```
-
-### Passo 2: Criando o Middleware Genérico de Validação (src/infrastructure/http/middlewares/validate-request.ts)
-
-Este middleware aceita schemas para body, query e params, validando o payload antes de repassá-lo ao Controller.
-
-```ts
-
-import { Request, Response, NextFunction } from 'express';
-import { ZodSchema, ZodError } from 'zod';
-import { AppError } from '@domain/errors/app-error';
-
-interface RequestValidationSchemas {
-  body?: ZodSchema;
-  query?: ZodSchema;
-  params?: ZodSchema;
+  constructor(message: string, statusCode = 400, details?: unknown) {
+    this.message = message;
+    this.statusCode = statusCode;
+    this.details = details;
+  }
 }
 
-export const validateRequest = (schemas: RequestValidationSchemas) => {
-  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
-    try {
-      if (schemas.body) {
-        req.body = await schemas.body.parseAsync(req.body);
-      }
-      if (schemas.query) {
-        req.query = await schemas.query.parseAsync(req.query);
-      }
-      if (schemas.params) {
-        req.params = await schemas.params.parseAsync(req.params);
-      }
-      next();
-    } catch (error) {
-      if (error instanceof ZodError) {
-        // Formata os erros do Zod para exibição no AppError
-        const issueDetails = error.issues.map((issue) => ({
-          field: issue.path.join('.'),
-          message: issue.message,
-        }));
+```
 
-        return next(new AppError('Dados de entrada inválidos', 400, issueDetails));
-      }
-      next(error);
+2. Criando as Exceções Especializadas de Domínio
+
+```ts
+
+// src/domain/errors/not-found-error.ts
+import { AppError } from './app-error';
+
+export class NotFoundError extends AppError {
+  constructor(entityName: string) {
+    super(`${entityName} não encontrado(a)`, 404);
+  }
+}
+
+// src/domain/errors/conflict-error.ts
+import { AppError } from './app-error';
+
+export class ConflictError extends AppError {
+  constructor(message: string) {
+    super(message, 409);
+  }
+}
+
+// src/domain/errors/unauthorized-error.ts
+import { AppError } from './app-error';
+
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Não autorizado') {
+    super(message, 401);
+  }
+}
+
+```
+
+3. Exemplo de Uso nos Use Cases de Domínio
+
+Veja como o código dos Casos de Uso ganha leitura expressiva e limpa:
+
+```ts
+
+// src/application/useCases/getUserById.ts
+import { UserRepository } from '@domain/repositories/user.repository';
+import { User } from '@domain/entities/user';
+import { NotFoundError } from '@domain/errors/not-found-error';
+
+export class GetUserByIdUseCase {
+  constructor(private readonly userRepository: UserRepository) {}
+
+  async execute(id: string): Promise<User> {
+    const user = await this.userRepository.findById(id);
+
+    if (!user) {
+      // Usa a exceção semântica de Domínio
+      throw new NotFoundError('Usuário');
     }
-  };
+
+    return user;
+  }
+}
+
+```
+
+```ts
+
+// src/application/useCases/createUser.ts
+import { UserRepository } from '@domain/repositories/user.repository';
+import { ConflictError } from '@domain/errors/conflict-error';
+
+export class CreateUserUseCase {
+  constructor(private readonly userRepository: UserRepository) {}
+
+  async execute(data: { name: string; email: string }) {
+    const userExists = await this.userRepository.findByEmail(data.email);
+
+    if (userExists) {
+      // Sinaliza conflito sem precisar citar o status HTTP 409 explicitamente
+      throw new ConflictError('Já existe um usuário cadastrado com este e-mail');
+    }
+
+    return this.userRepository.create(data);
+  }
+}
+
+```
+
+## Live Coding: Conectando a Infraestrutura ao Funil de Erros
+
+### Passo 1: Mapeador de Erros do Prisma (src/infrastructure/database/prisma/prisma-error-mapper.ts)
+
+Quando o banco de dados rejeita uma operação (por exemplo, um e-mail duplicado ou uma chave estrangeira inválida), o Prisma lança uma exceção da classe PrismaClientKnownRequestError.
+
+Criaremos uma classe utilitária responsável por traduzir esses códigos numéricos do Prisma (P2002, P2025, P2003) em exceções limpas do nosso domínio (ConflictError, NotFoundError, AppError):
+
+```ts
+
+// src/infrastructure/database/prisma/prisma-error-mapper.ts
+import { Prisma } from '@prisma/client';
+import { AppError } from '@domain/errors/app-error';
+import { ConflictError } from '@domain/errors/conflict-error';
+import { NotFoundError } from '@domain/errors/not-found-error';
+
+export class PrismaErrorMapper {
+  static toAppError(error: Prisma.PrismaClientKnownRequestError): AppError {
+    switch (error.code) {
+      case 'P2002': {
+        // Violação de constraint Única (Unique constraint)
+        const target = (error.meta?.target as string[])?.join(', ') || 'campo';
+        return new ConflictError(`Já existe um registro cadastrado com este ${target}`);
+      }
+      case 'P2025': {
+        // Registro não encontrado para atualização ou exclusão
+        return new NotFoundError('Registro no banco de dados');
+      }
+      case 'P2003': {
+        // Violação de Chave Estrangeira (Foreign key constraint)
+        return new AppError('Relacionamento inválido. O recurso associado não existe', 400);
+      }
+      default:
+        // Caso ocorra algum erro do Prisma não mapeado explicitamente
+        return new AppError('Erro ao processar operação no banco de dados', 500);
+    }
+  }
+}
+
+```
+
+### Passo 2: O Middleware Global de Erros Refatorado (src/infrastructure/http/middlewares/error-handler.ts)
+
+Agora, atualizamos o nosso errorHandler para atuar como o Funil Unificado de Exceções. Ele tratará em ordem de prioridade:
+
+1. AppError: Erros de Domínio e Regras de Negócio (NotFoundError, ConflictError, etc.).
+
+2. ZodError: Falhas de validação de borda.
+
+3. PrismaClientKnownRequestError: Exceções do banco de dados interceptadas pelo PrismaErrorMapper.
+
+4. Erro Não Tratado (500): Fallback para bugs imprevistos de sistema.
+
+```ts
+
+// src/infrastructure/http/middlewares/error-handler.ts
+import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
+import { AppError } from '@domain/errors/app-error';
+import { PrismaErrorMapper } from '@infrastructure/database/prisma/prisma-error-mapper';
+
+export const errorHandler = (
+  error: Error,
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+): Response => {
+  // 1. Erros Operacionais de Domínio e Regras de Negócio Mapeadas
+  if (error instanceof AppError) {
+    const responsePayload: Record<string, unknown> = {
+      status: 'error',
+      message: error.message,
+    };
+
+    if (error.details !== undefined && error.details !== null) {
+      responsePayload.details = error.details;
+    }
+
+    return res.status(error.statusCode).json(responsePayload);
+  }
+
+  // 2. Erros de Validação da Borda (Zod)
+  if (error instanceof ZodError) {
+    const issueDetails = error.issues.map((issue) => ({
+      field: issue.path.join('.'),
+      message: issue.message,
+    }));
+
+    return res.status(400).json({
+      status: 'error',
+      message: 'Dados de entrada inválidos',
+      details: issueDetails,
+    });
+  }
+
+  // 3. Erros Conhecidos de Infraestrutura / Banco de Dados (Prisma)
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    const appError = PrismaErrorMapper.toAppError(error);
+    return res.status(appError.statusCode).json({
+      status: 'error',
+      message: appError.message,
+    });
+  }
+
+  // 4. Erros Desconhecidos ou Críticos de Sistema (500 Internal Server Error)
+  console.error('💥 [Unhandled System Error]:', error);
+
+  return res.status(500).json({
+    status: 'error',
+    message: 'Erro interno do servidor',
+  });
 };
 
 ```
 
-### Passo 3: Criando os Schemas de Usuário (src/infrastructure/http/schemas/user-schemas.ts)
+### Passo 3: Registrando o errorHandler na Aplicação (src/main/app.ts ou server.ts)
 
-Definimos as regras de entrada para Criação e Busca por ID de Usuários:
-
-```ts
-
-import { z } from 'zod';
-
-export const createUserSchema = z.object({
-  name: z
-    .string({ required_error: 'O nome é obrigatório' })
-    .min(3, 'O nome deve ter no mínimo 3 caracteres')
-    .trim(),
-  email: z
-    .string({ required_error: 'O e-mail é obrigatório' })
-    .email('Formato de e-mail inválido')
-    .toLowerCase(),
-});
-
-export const getUserByIdSchema = z.object({
-  id: z.string().uuid('O ID do usuário deve ser um UUID válido'),
-});
-
-// Inferência automática de tipos TypeScript a partir dos schemas Zod
-export type CreateUserDTO = z.infer<typeof createUserSchema>;
-export type GetUserByIdParams = z.infer<typeof getUserByIdSchema>;
-
-```
-
-### Passo 4: Acoplando o Middleware às Rotas de Usuário (src/infrastructure/http/routes/user-routes.ts)
-
-Injetamos o middleware diretamente nas rotas HTTP do Express:
+O middleware de erro DEVE obrigatoriamente ser registrado APÓS todas as rotas da aplicação.
 
 ```ts
 
-import { Router } from 'express';
-import { validateRequest } from '../middlewares/validate-request';
-import { createUserSchema, getUserByIdSchema } from '../schemas/user-schemas';
-import { makeUserController } from '@main/factories/make-user-controller';
+// src/main/app.ts
+import express from 'express';
+import 'express-async-errors'; // Garante a captura automática de erros em funções assíncronas
+import { userRoutes } from '@infrastructure/http/routes/user-routes';
+import { errorHandler } from '@infrastructure/http/middlewares/error-handler';
 
-const userRoutes = Router();
-const userController = makeUserController();
+const app = express();
 
-userRoutes.post(
-  '/',
-  validateRequest({ body: createUserSchema }),
-  (req, res, next) => userController.create(req, res, next)
-);
+app.use(express.json());
 
-userRoutes.get(
-  '/:id',
-  validateRequest({ params: getUserByIdSchema }),
-  (req, res, next) => userController.getById(req, res, next)
-);
+// Registro das Rotas da Aplicação
+app.use('/api/v1/users', userRoutes);
 
-export { userRoutes };
+// 🛑 O Middleware Global de Erros DEVE ser a ÚLTIMA declaração do app!
+app.use(errorHandler);
+
+export { app };
 
 ```

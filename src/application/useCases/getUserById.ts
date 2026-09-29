@@ -1,6 +1,6 @@
 import { IUserRepository } from '@domain/repositories/user.repository';
 import { User } from '@domain/entities/user';
-import { AppError } from '@domain/errors/app.error';
+import { NotFoundError } from '@domain/errors/notFound.error';
 
 export class GetUserByIdUseCase {
   constructor(private readonly userRepository: IUserRepository) {}
@@ -9,7 +9,7 @@ export class GetUserByIdUseCase {
     const user = await this.userRepository.findById(id);
 
     if (!user) {
-      throw new AppError('Usuário não encontrado', 404);
+      throw new NotFoundError('Usuário');
     }
 
     return user;
