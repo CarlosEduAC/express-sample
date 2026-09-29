@@ -35,6 +35,7 @@
     "@prisma/client": "^6.19.3",
     "express": "^5.2.1",
     "pg": "^8.23.0",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "zod": "^3.25.76"
   }
 }
