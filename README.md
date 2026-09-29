@@ -12,7 +12,7 @@ Exibir o stack trace nativo do Node.js ou queries SQL cruas revela a estrutura d
 
 2. Inconsistência de Contrato no Front-end:
 
-Se o Zod responde de um jeito ({ issues: [...] }), a regra de negócio de outro ({ error: "Mensagem" }) e o Express de outro (<pre>Cannot POST /...</pre>), a equipe de Front-end/Mobile é obrigada a escrever dezenas de if/else apenas para tratar erros.
+Se o Zod responde de um jeito `({ issues: [...] })`, a regra de negócio de outro `({ error: "Mensagem" })` e o Express de outro `(<pre>Cannot POST /...</pre>)`, a equipe de Front-end/Mobile é obrigada a escrever dezenas de if/else apenas para tratar erros.
 
 3. Queda do Processo Node.js (Uncaught Exceptions):
 
