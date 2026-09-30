@@ -14,9 +14,255 @@
     {
       "name": "Users",
       "description": "Endpoints de gerenciamento de usuários"
+    },
+    {
+      "name": "Addresses",
+      "description": "Endpoints de gerenciamento de endereços"
     }
   ],
   "paths": {
+    "/api/v1/addresses/{cep}": {
+      "get": {
+        "tags": [
+          "Endereços"
+        ],
+        "summary": "Busca detalhes de endereço por CEP",
+        "description": "Consome o gateway do ViaCEP na Boundary Layer para autopreenchimento e validação de endereço.",
+        "parameters": [
+          {
+            "name": "cep",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "CEP com 8 dígitos numéricos (com ou sem hífen)",
+            "example": "01001000"
+          },
+          {
+            "name": "parseAsync(req",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Endereço encontrado com sucesso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "street": {
+                      "type": "string",
+                      "example": "Praça da Sé"
+                    },
+                    "neighborhood": {
+                      "type": "string",
+                      "example": "Sé"
+                    },
+                    "city": {
+                      "type": "string",
+                      "example": "São Paulo"
+                    },
+                    "state": {
+                      "type": "string",
+                      "example": "SP"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "street": {
+                      "type": "string",
+                      "example": "Praça da Sé"
+                    },
+                    "neighborhood": {
+                      "type": "string",
+                      "example": "Sé"
+                    },
+                    "city": {
+                      "type": "string",
+                      "example": "São Paulo"
+                    },
+                    "state": {
+                      "type": "string",
+                      "example": "SP"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validação de borda (Zod) - CEP inválido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Dados de entrada inválidos"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "example": "cep"
+                          },
+                          "message": {
+                            "type": "string",
+                            "example": "O CEP deve conter exatamente 8 dígitos numéricos"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Dados de entrada inválidos"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "example": "cep"
+                          },
+                          "message": {
+                            "type": "string",
+                            "example": "O CEP deve conter exatamente 8 dígitos numéricos"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Endereço não encontrado para o CEP informado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Endereço para o CEP informado não encontrado(a)"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Endereço para o CEP informado não encontrado(a)"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço do ViaCEP indisponível ou timeout no Gateway.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "O serviço de busca de CEP está temporariamente indisponível"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "O serviço de busca de CEP está temporariamente indisponível"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/": {
       "get": {
         "tags": [
@@ -51,6 +297,15 @@
         ],
         "summary": "Cria um novo usuário",
         "description": "",
+        "parameters": [
+          {
+            "name": "parseAsync(req",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "201": {
             "description": "Usuário criado com sucesso.",
@@ -93,6 +348,60 @@
           }
         }
       }
+    },
+    "/api/v1/users/{id}": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Busca um usuário pelo ID",
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID do usuário"
+          },
+          {
+            "name": "parseAsync(req",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usuário encontrado com sucesso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Usuário não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -112,15 +421,14 @@
             "type": "string",
             "example": "john.doe@example.com"
           }
+        },
+        "xml": {
+          "name": "User"
         }
       },
       "CreateUserDto": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "example": "123e4567-e89b-12d3-a456-426614174000"
-          },
           "name": {
             "type": "string",
             "example": "John Doe"
@@ -131,10 +439,12 @@
           }
         },
         "required": [
-          "id",
           "name",
           "email"
-        ]
+        ],
+        "xml": {
+          "name": "CreateUserDto"
+        }
       },
       "ErrorResponse": {
         "type": "object",
@@ -143,6 +453,33 @@
             "type": "string",
             "example": "E-mail inválido."
           }
+        },
+        "xml": {
+          "name": "ErrorResponse"
+        }
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "street": {
+            "type": "string",
+            "example": "Praça da Sé"
+          },
+          "neighborhood": {
+            "type": "string",
+            "example": "Sé"
+          },
+          "city": {
+            "type": "string",
+            "example": "São Paulo"
+          },
+          "state": {
+            "type": "string",
+            "example": "SP"
+          }
+        },
+        "xml": {
+          "name": "Address"
         }
       }
     }

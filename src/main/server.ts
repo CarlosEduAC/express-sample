@@ -11,7 +11,7 @@ app.use(express.json());
 setupSwagger(app);
 
 // 2. Rotas dos Módulos
-app.use('/api/v1', routes);
+app.use('/', routes);
 
 // 3. Middleware Global de Erros (OBRIGATORIAMENTE NO FINAL)
 app.use(errorHandler);

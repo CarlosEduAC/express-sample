@@ -18,6 +18,10 @@ const doc = {
       name: 'Users',
       description: 'Endpoints de gerenciamento de usuários',
     },
+    {
+      name: 'Addresses',
+      description: 'Endpoints de gerenciamento de endereços',
+    },
   ],
   definitions: {
     User: {
@@ -32,11 +36,19 @@ const doc = {
     ErrorResponse: {
       error: 'E-mail inválido.',
     },
+    Address: {
+      street: 'Praça da Sé',
+      neighborhood: 'Sé',
+      city: 'São Paulo',
+      state: 'SP',
+    },
   },
 };
 
 const outputFile = path.resolve(__dirname, 'swagger-output.json');
 
-const endpointsFiles = [path.resolve(__dirname, '../server.ts')];
+const endpointsFiles = [
+  path.resolve(__dirname, '../../infrastructure/http/routes/index.ts'),
+];
 
 swaggerAutogen({ openapi: '3.0.0' })(outputFile, endpointsFiles, doc);

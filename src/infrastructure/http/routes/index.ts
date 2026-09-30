@@ -4,7 +4,7 @@ import { userRoutes } from './user.routes';
 
 const routes = Router();
 
-routes.use('/addresses', addressRoutes);
-routes.use('/users', userRoutes);
+routes.use('/api/v1/addresses', addressRoutes);
+routes.use('/api/v1/users', userRoutes);
 
 export { routes };
