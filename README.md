@@ -169,6 +169,12 @@ export interface AddressGateway {
 
 ### Passo 2: A Implementação na Infraestrutura (src/infrastructure/gateways/via-cep-gateway.ts)
 
+Instalar o pacote Axios, responsável por realizar as requisições HTTP.
+
+```bash
+npm install axios
+```
+
 Criamos o adaptador concreto usando Axios com controle de timeout e tratamento da Camada Anti-Corrupção.
 
 ```ts

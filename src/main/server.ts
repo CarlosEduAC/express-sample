@@ -1,6 +1,6 @@
 import express from 'express';
 import { setupSwagger } from '@main/config/swagger';
-import { userRoutes } from '@infrastructure/http/routes/user.routes';
+import { routes } from '@infrastructure/http/routes';
 import { errorHandler } from '@infrastructure/http/middlewares/errorHandler';
 
 const app = express();
@@ -11,7 +11,7 @@ app.use(express.json());
 setupSwagger(app);
 
 // 2. Rotas dos Módulos
-app.use('/api/v1/users', userRoutes);
+app.use('/api/v1', routes);
 
 // 3. Middleware Global de Erros (OBRIGATORIAMENTE NO FINAL)
 app.use(errorHandler);
