@@ -64,12 +64,12 @@ O mundo externo engloba tudo o que está fora do processo da sua aplicação:
 ```txt
 
   🌐 MUNDO EXTERNO (Imprevisível)             🏠 MUNDO INTERNO (Controlado)
- ┌─────────────────────────────┐           ┌─────────────────────────────┐
- │ • APIs de Terceiros         │  Boundary │ • Regras de Negócio         │
- │ • Payloads instáveis        │   Layer   │ • Entidades de Domínio      │
- │ • Quedas de conexão/Rede    │  ═══════> │ • Use Cases determinísticos │
- │ • Formatos brutos (JSON)    │   (Gate-  │ • Tipagem forte e segura    │
- └─────────────────────────────┘    ways)  └─────────────────────────────┘
+ ┌─────────────────────────────┐            ┌─────────────────────────────┐
+ │ • APIs de Terceiros         │  Boundary  │ • Regras de Negócio         │
+ │ • Payloads instáveis        │   Layer    │ • Entidades de Domínio      │
+ │ • Quedas de conexão/Rede    │ ═════════> │ • Use Cases determinísticos │
+ │ • Formatos brutos (JSON)    │ (Gateways) │ • Tipagem forte e segura    │
+ └─────────────────────────────┘            └─────────────────────────────┘
 
 ```
 
@@ -502,7 +502,7 @@ Por que esse padrão Mock Gateway é poderoso para a Clean Architecture?
 
 - Velocidade de Execução: Os testes rodam em milissegundos, sem latência de rede.
 - Independência: O pipeline de CI/CD pode rodar todos os testes unitários da aplicação sem precisar de conexão com a internet ou chaves de API.
-- Demonstração Prática do DIP: Os alunos enxergam com clareza o Princípio da Inversão de Dependência (DIP) — o Use Case depende apenas da interface AddressGateway, tornando a implementação de infraestrutura (ViaCepGateway ou InMemoryAddressGateway) totalmente intercambiável.
+- Demonstração Prática do DIP: O Use Case depende apenas da interface AddressGateway, tornando a implementação de infraestrutura (ViaCepGateway ou InMemoryAddressGateway) totalmente intercambiável.
 
 ## Retentativas Inteligentes (Smart Retries com Backoff Exponencial)
 
