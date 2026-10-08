@@ -13,7 +13,7 @@ addressRoutes.get(
   validateRequest({ params: getAddressByCepSchema }),
   (req, res, next) => {
     /*
-      #swagger.tags = ['Endereços']
+      #swagger.tags = ['Addresses']
       #swagger.summary = 'Busca detalhes de endereço por CEP'
       #swagger.description = 'Consome o gateway do ViaCEP na Boundary Layer. Requer autenticação por Bearer Token.'
       #swagger.security = [{ "bearerAuth": [] }]

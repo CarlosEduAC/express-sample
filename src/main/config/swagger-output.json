@@ -24,7 +24,7 @@
     "/api/v1/addresses/{cep}": {
       "get": {
         "tags": [
-          "Endereços"
+          "Addresses"
         ],
         "summary": "Busca detalhes de endereço por CEP",
         "description": "Consome o gateway do ViaCEP na Boundary Layer. Requer autenticação por Bearer Token.",
