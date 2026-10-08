@@ -26,11 +26,14 @@ export class UserController {
       });
 
       return res.status(201).json({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        createdAt: user.createdAt,
+        message: 'Usuário criado com sucesso!',
+        data: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          createdAt: user.createdAt,
+        },
       });
     } catch (error) {
       next(error);

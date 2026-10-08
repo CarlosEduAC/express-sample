@@ -455,6 +455,225 @@
           }
         }
       }
+    },
+    "/api/v1/users/authenticate": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Autentica um usuário",
+        "description": "Valida as credenciais (e-mail e senha) e retorna o perfil do usuário acompanhado do Token JWT para acesso a rotas protegidas.",
+        "parameters": [
+          {
+            "name": "parseAsync(req",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Autenticação realizada com sucesso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "uuid-do-usuario"
+                        },
+                        "name": {
+                          "type": "string",
+                          "example": "Ash Ketchum"
+                        },
+                        "email": {
+                          "type": "string",
+                          "example": "ash@pokemanager.com"
+                        },
+                        "role": {
+                          "type": "string",
+                          "example": "USER"
+                        }
+                      }
+                    },
+                    "token": {
+                      "type": "string",
+                      "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "example": "uuid-do-usuario"
+                        },
+                        "name": {
+                          "type": "string",
+                          "example": "Ash Ketchum"
+                        },
+                        "email": {
+                          "type": "string",
+                          "example": "ash@pokemanager.com"
+                        },
+                        "role": {
+                          "type": "string",
+                          "example": "USER"
+                        }
+                      }
+                    },
+                    "token": {
+                      "type": "string",
+                      "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Erro de Validação da Borda (Zod).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Dados de entrada inválidos"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "example": "email"
+                          },
+                          "message": {
+                            "type": "string",
+                            "example": "E-mail em formato inválido"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Dados de entrada inválidos"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "example": "email"
+                          },
+                          "message": {
+                            "type": "string",
+                            "example": "E-mail em formato inválido"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credenciais inválidas (E-mail ou senha incorretos).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Credenciais inválidas"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Credenciais inválidas"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthenticateUserDto"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -489,14 +708,39 @@
           "email": {
             "type": "string",
             "example": "john.doe@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "senhaSegura123"
           }
         },
         "required": [
           "name",
-          "email"
+          "email",
+          "password"
         ],
         "xml": {
           "name": "CreateUserDto"
+        }
+      },
+      "AuthenticateUserDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "john.doe@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "senhaSegura123"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "xml": {
+          "name": "AuthenticateUserDto"
         }
       },
       "ErrorResponse": {
