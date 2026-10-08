@@ -27,7 +27,7 @@
           "Endereços"
         ],
         "summary": "Busca detalhes de endereço por CEP",
-        "description": "Consome o gateway do ViaCEP na Boundary Layer para autopreenchimento e validação de endereço.",
+        "description": "Consome o gateway do ViaCEP na Boundary Layer. Requer autenticação por Bearer Token.",
         "parameters": [
           {
             "name": "cep",
@@ -38,6 +38,13 @@
             },
             "description": "CEP com 8 dígitos numéricos (com ou sem hífen)",
             "example": "01001000"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "parseAsync(req",
@@ -178,6 +185,47 @@
               }
             }
           },
+          "401": {
+            "description": "Não Autenticado - Bearer Token ausente ou inválido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Token JWT não fornecido ou inválido"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "error"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Token JWT não fornecido ou inválido"
+                    }
+                  },
+                  "xml": {
+                    "name": "main"
+                  }
+                }
+              }
+            }
+          },
           "404": {
             "description": "Endereço não encontrado para o CEP informado.",
             "content": {
@@ -260,7 +308,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/users/": {
@@ -481,6 +534,14 @@
         "xml": {
           "name": "Address"
         }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "apiKey",
+        "name": "Authorization",
+        "in": "header",
+        "description": "Informe o Token JWT no formato: Bearer <seu_token>"
       }
     }
   }

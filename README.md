@@ -155,6 +155,12 @@ Dessa forma, qualquer rota protegida pelo middleware ensureAuthenticated terá a
 
 ## Live Coding Hands-on - Módulo de Autenticação
 
+### Passo 0: Pré-requisitos
+
+Antes de iniciar o desenvolvimento do módulo de autenticação, certifique-se de ter instalado todas as dependências do projeto e configurado o banco de dados corretamente.
+
+Além disso atualize a entidade de usuário e os repositórios para refletir as mudanças no schema do Prisma, incluindo o campo de senha e o papel do usuário.
+
 ### Passo 1: Atualização do Schema do Prisma (prisma/schema.prisma)
 
 Adicionamos o enum de papéis e o campo de senha (criptografada) na tabela de Usuários/Treinadores:
@@ -176,6 +182,52 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@map("users")
+}
+
+```
+
+Após alterar o schema, você precisa gerar a migração em SQL e atualizar a estrutura do banco de dados relacional.
+
+```bash
+
+npx prisma migrate dev --name add_rbac_and_auth_to_users
+
+```
+
+Se necessário, removo os dados do seu banco de dados antes de aplicar a migração:
+
+```bash
+
+npx prisma migrate reset
+
+```
+
+Atualizar as Tipagens do Prisma Client, se necessário:
+
+```bash
+
+npx prisma generate
+
+```
+
+Como o Enum fica disponível no seu código TypeScript?
+
+```ts
+
+// Exemplo de uso no seu Repositório ou Seeder
+import { PrismaClient, Role } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function createAdmin() {
+  await prisma.user.create({
+    data: {
+      name: 'Ash Ketchum (Mestre)',
+      email: 'ash@pokemanager.com',
+      password: 'hash_gerado_pelo_bcrypt', // $2a$08$...
+      role: Role.ADMIN, // Tipado via Prisma Client!
+    },
+  });
 }
 
 ```
@@ -211,6 +263,14 @@ export class BcryptHashProvider implements HashProvider {
     return compare(payload, hashed);
   }
 }
+
+```
+
+Instale a dependência do bcryptjs:
+
+```bash
+
+npm install bcryptjs
 
 ```
 
@@ -277,6 +337,14 @@ export class AuthenticateUserUseCase {
     };
   }
 }
+
+```
+
+Instale as dependências necessárias:
+
+```bash
+
+npm install jsonwebtoken
 
 ```
 
@@ -355,35 +423,125 @@ export const ensureRole = (roles: string[]) => {
 
 ### Passo 5: Protegendo as Rotas com Swagger Autogen
 
+Atualizar a Rota com o Middleware e Comentários Swagger:
+
 ```ts
 
-// src/infrastructure/http/routes/pokemon-routes.ts
+// src/infrastructure/http/routes/address-routes.ts
 import { Router } from 'express';
+import { validateRequest } from '../middlewares/validate-request';
 import { ensureAuthenticated } from '../middlewares/ensure-authenticated';
-import { ensureRole } from '../middlewares/ensure-role';
+import { getAddressByCepSchema } from '../schemas/address-schemas';
+import { makeAddressController } from '@main/factories/make-address-controller';
 
-const pokemonRoutes = Router();
+const addressRoutes = Router();
+const addressController = makeAddressController();
 
-// Rota Pública: Qualquer usuário (autenticado ou não) pode listar Pokémons
-pokemonRoutes.get('/', (req, res, next) => pokemonController.list(req, res, next));
-
-// Rota Protegida: Apenas usuários com role 'ADMIN' podem criar novos Pokémons na base
-pokemonRoutes.post(
-  '/',
-  ensureAuthenticated,
-  ensureRole(['ADMIN']),
+addressRoutes.get(
+  '/:cep',
+  ensureAuthenticated, // Exige token JWT válido para acessar a rota
+  validateRequest({ params: getAddressByCepSchema }),
   (req, res, next) => {
     /*
-      #swagger.tags = ['Pokémons']
-      #swagger.summary = 'Cadastra um novo Pokémon (Apenas ADMIN)'
+      #swagger.tags = ['Endereços']
+      #swagger.summary = 'Busca detalhes de endereço por CEP'
+      #swagger.description = 'Consome o gateway do ViaCEP na Boundary Layer. Requer autenticação por Bearer Token.'
       #swagger.security = [{ "bearerAuth": [] }]
-      #swagger.responses[401] = { description: 'Token Ausente/Inválido' }
-      #swagger.responses[403] = { description: 'Acesso Proibido (Necessário papel ADMIN)' }
+
+      #swagger.parameters['cep'] = {
+        in: 'path',
+        description: 'CEP com 8 dígitos numéricos',
+        required: true,
+        type: 'string',
+        example: '01001000'
+      }
+
+      #swagger.responses[200] = {
+        description: 'Endereço encontrado com sucesso.',
+        schema: {
+          street: 'Praça da Sé',
+          neighborhood: 'Sé',
+          city: 'São Paulo',
+          state: 'SP'
+        }
+      }
+
+      #swagger.responses[400] = {
+        description: 'Validação de borda (Zod) - CEP inválido.',
+        schema: {
+          status: 'error',
+          message: 'Dados de entrada inválidos',
+          details: [{ field: 'cep', message: 'O CEP deve conter exatamente 8 dígitos numéricos' }]
+        }
+      }
+
+      #swagger.responses[401] = {
+        description: 'Não Autenticado - Bearer Token ausente ou inválido.',
+        schema: {
+          status: 'error',
+          message: 'Token JWT não fornecido ou inválido'
+        }
+      }
+
+      #swagger.responses[404] = {
+        description: 'Endereço não encontrado para o CEP informado.',
+        schema: {
+          status: 'error',
+          message: 'Endereço para o CEP informado não encontrado'
+        }
+      }
+
+      #swagger.responses[503] = {
+        description: 'Serviço do ViaCEP indisponível ou timeout no Gateway.',
+        schema: {
+          status: 'error',
+          message: 'O serviço de busca de CEP está temporariamente indisponível'
+        }
+      }
     */
-    return pokemonController.create(req, res, next);
+    return addressController.getByCep(req, res, next);
   }
 );
 
-export { pokemonRoutes };
+export { addressRoutes };
 
 ```
+
+Configurar o securityDefinitions no arquivo de Build do Swagger
+
+Para que o botão "Authorize 🔓" apareça na interface do Swagger UI e permita colar o JWT Token, certifique-se de definir a chave securityDefinitions no arquivo que gera o Swagger (normalmente swagger.js ou swagger-builder.ts):
+
+```javascript
+
+// swagger.js (ou arquivo de configuração do swagger-autogen)
+const swaggerAutogen = require('swagger-autogen')();
+
+const doc = {
+  info: {
+    title: 'PokéManager API & Services',
+    description: 'Documentação da API com Clean Architecture',
+    version: '1.0.0',
+  },
+  host: 'localhost:3333',
+  basePath: '/api/v1',
+  schemes: ['http'],
+  securityDefinitions: {
+    bearerAuth: {
+      type: 'apiKey',
+      name: 'Authorization',
+      in: 'header',
+      description: 'Informe o Token JWT no formato: Bearer <seu_token>',
+    },
+  },
+};
+
+const outputFile = './src/infrastructure/http/docs/swagger-output.json';
+const endpointsFiles = ['./src/main/app.ts']; // ou './src/infrastructure/http/routes/index.ts'
+
+swaggerAutogen(outputFile, endpointsFiles, doc);
+
+```
+
+Atualizar a Documentação
+
+Para atualizar a documentação do Swagger, execute o arquivo de build do Swagger (normalmente `swagger-generator.ts` ou `swagger.ts`). Isso irá gerar o arquivo `swagger-output.json` atualizado com base nas rotas e comentários Swagger presentes no seu código.

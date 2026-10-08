@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validateRequest } from '../middlewares/validateRequest';
+import { authenticatedHandler } from '../middlewares/authenticatedHandler';
 import { getAddressByCepSchema } from '../schemas/address.schema';
 import { makeAddressController } from '@main/factories/makeAddressController.factory';
 
@@ -8,12 +9,14 @@ const addressController = makeAddressController();
 
 addressRoutes.get(
   '/:cep',
+  authenticatedHandler,
   validateRequest({ params: getAddressByCepSchema }),
   (req, res, next) => {
     /*
       #swagger.tags = ['Endereços']
       #swagger.summary = 'Busca detalhes de endereço por CEP'
-      #swagger.description = 'Consome o gateway do ViaCEP na Boundary Layer para autopreenchimento e validação de endereço.'
+      #swagger.description = 'Consome o gateway do ViaCEP na Boundary Layer. Requer autenticação por Bearer Token.'
+      #swagger.security = [{ "bearerAuth": [] }]
 
       #swagger.parameters['cep'] = {
         in: 'path',
@@ -39,6 +42,14 @@ addressRoutes.get(
           status: 'error',
           message: 'Dados de entrada inválidos',
           details: [{ field: 'cep', message: 'O CEP deve conter exatamente 8 dígitos numéricos' }]
+        }
+      }
+
+      #swagger.responses[401] = {
+        description: 'Não Autenticado - Bearer Token ausente ou inválido.',
+        schema: {
+          status: 'error',
+          message: 'Token JWT não fornecido ou inválido'
         }
       }
 

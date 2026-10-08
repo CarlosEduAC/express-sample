@@ -13,6 +13,14 @@ const doc = {
   schemes: ['http'],
   consumes: ['application/json'],
   produces: ['application/json'],
+  securityDefinitions: {
+    bearerAuth: {
+      type: 'apiKey',
+      name: 'Authorization',
+      in: 'header',
+      description: 'Informe o Token JWT no formato: Bearer <seu_token>',
+    },
+  },
   tags: [
     {
       name: 'Users',
@@ -32,6 +40,11 @@ const doc = {
     CreateUserDto: {
       $name: 'John Doe',
       $email: 'john.doe@example.com',
+      $password: 'senhaSegura123',
+    },
+    AuthenticateUserDto: {
+      $email: 'john.doe@example.com',
+      $password: 'senhaSegura123',
     },
     ErrorResponse: {
       error: 'E-mail inválido.',
