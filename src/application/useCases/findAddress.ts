@@ -8,7 +8,7 @@ export class FindAddressUseCase {
     const address = await this.addressGateway.findAddressByCep(cep);
 
     if (!address) {
-      throw new NotFoundError('Endereço para o CEP informado');
+      throw new NotFoundError('Endereço incorreto para o CEP informado');
     }
 
     return address;
