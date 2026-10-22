@@ -1,373 +1,540 @@
-# Tratamento Global de Erros de Infraestrutura
+# Renovação com Refresh Tokens, Revogação e Rota
 
-## Por Que Estruturar um Tratamento Global de Erros?
+Em sistemas corporativos, emitir um token JWT no momento do login é apenas o primeiro passo de uma estratégia de segurança. O verdadeiro desafio de engenharia começa depois do login: como manter a sessão segura ao longo do tempo sem degradar a experiência do usuário (UX) e sem violar os princípios da Clean Architecture?
 
-Em sistemas distribuídos e APIs REST em produção, exceções vão acontecer. A diferença entre um sistema frágil e um resiliente está em como a aplicação lida com essas exceções quando elas ocorrem.
+## O Dilema da Expiração: Segurança vs. Usabilidade
 
-Sem um tratamento global centralizado, a aplicação sofre de três problemas graves:
-
-1. Vazamento de Informações Sensíveis (Information Disclosure):
-
-Exibir o stack trace nativo do Node.js ou queries SQL cruas revela a estrutura do banco de dados, nomes de tabelas e versões de pacotes para possíveis atacantes.
-
-2. Inconsistência de Contrato no Front-end:
-
-Se o Zod responde de um jeito ({ issues: [...] }), a regra de negócio de outro ({ error: "Mensagem" }) e o Express de outro (<pre>Cannot POST /...</pre>), a equipe de Front-end/Mobile é obrigada a escrever dezenas de if/else apenas para tratar erros.
-
-3. Queda do Processo Node.js (Uncaught Exceptions):
-
-Promessas rejeitadas (Unhandled Rejections) que não são capturadas por um middleware na borda podem travar o evento loop ou derrubar a instância da aplicação no container Docker.
-
-## A Taxonomia dos Erros na Clean Architecture
-
-Para projetar um sistema elegante, precisamos categorizar os erros de acordo com a camada de origem e a sua natureza operacional:
+Projetar o tempo de vida (Time-to-Live - TTL) de um token é um jogo de balanço entre dois riscos opostos:
 
 ```txt
 
-                                ┌──────────────────────────┐
-                                │   Requisição HTTP (API)  │
-                                └────────────┬─────────────┘
-                                             │
-                       ┌─────────────────────┴─────────────────────┐
-                       ▼                                           ▼
-          [ Erros Operacionais (4xx) ]               [ Erros de Sistema / Bugs (500) ]
-        Previsíveis e esperados no fluxo             Inesperados, falhas de infra
-                       │                                           │
-      ┌────────────────┼────────────────┐                          │
-      ▼                ▼                ▼                          ▼
-Erros de Borda    Erros de Domínio   Erros de Infra         Erros Não Tratados
-(Sintaxe / Zod)   (Regras / State)   (Prisma / Driver)      (NullPointer, Crash)
+🔴 Access Token com Vida Longa (ex: 30 dias)
+ ├─ Vantagem: O usuário raramente precisa digitar a senha (ótima UX).
+ └─ Perigo: Se o token for roubado (via script malicioso XSS ou intercepção), o atacante
+    terá 30 dias de acesso irrestrito. Você não consegue derrubar a sessão do invasor.
+
+ 🔴 Access Token com Vida Curta (ex: 15 minutos)
+ ├─ Vantagem: Se interceptado, a janela de ataque fecha rapidamente.
+ └─ Perigo: A cada 15 minutos o usuário é deslogado abruptamente e precisa refazer o login (pessíma UX).
 
 ```
 
-### A. Erros Operacionais (Status HTTP 4xx)
+### A Solução Industrial: A Estratégia de Tokens Duplos
 
-São exceções previsíveis que fazem parte do fluxo normal da aplicação. Ocorrem quando o cliente envia dados incorretos ou tenta realizar uma ação não permitida pelas regras de negócio.
-
-Exemplos: E-mail já cadastrado, saldo insuficiente, token expirado, ID inexistente.
-
-Comportamento Esperado: Não devem poluir os logs de erro crítico do servidor (nível ERROR). Devem responder imediatamente com um código HTTP apropriado (400, 401, 403, 404, 409) e orientar o usuário sobre como corrigir.
-
-### B. Erros de Sistema / Não Operacionais (Status HTTP 500)
-
-São falhas inesperadas causadas por bugs de código, indisponibilidade do banco de dados, falta de memória ou falha de rede com serviços externos.
-
-Exemplos: Cannot read property 'name' of undefined, perda da conexão com o PostgreSQL, falha no parse de um arquivo JSON corrompido.
-
-Comportamento Esperado: Devem ser registrados em ferramentas de observabilidade (Sentry, Datadog) em nível ERROR com o stack trace completo. Para o cliente público, o servidor deve retornar apenas uma mensagem genérica: "Erro interno do servidor".
-
-## A Hierarquia de Domínio: Expandindo o AppError
-
-Na Clean Architecture, a camada de Domínio não deve conhecer bibliotecas HTTP (Express) nem ORMs (Prisma). No entanto, para que o sistema consiga traduzir os erros de negócio em respostas HTTP sem acoplamento, estruturamos uma hierarquia de exceções de domínio.
-
-A classe base AppError serve de fundação para erros operacionais especializados:
+Para resolver esse dilema, a indústria adota o padrão de Tokens Duplos, onde cada token desempenha um papel cirúrgico na arquitetura:
 
 ```txt
 
-                             ┌───────────────────┐
-                             │     AppError      │ (Abstract/Base Class)
-                             └─────────┬─────────┘
-                                       │
-      ┌──────────────────┬─────────────┼─────────────┬──────────────────┐
-      ▼                  ▼             ▼             ▼                  ▼
-NotFoundError     ConflictError   ValidationError  UnauthorizedError  ForbiddenError
-   (404)              (409)          (400)               (401)             (403)
+ ┌───────────────────────────────────────────────────────────────────────────┐
+ │                      COMPARAÇÃO DE PAPÉIS DOS TOKENS                      │
+ ├───────────────────┬────────────────────────────┬──────────────────────────┤
+ │ Característica    │ Access Token               │ Refresh Token            │
+ ├───────────────────┼────────────────────────────┼──────────────────────────┤
+ │ Finalidade        │ Autorizar requisições HTTP │ Emitir novos Access      │
+ │                   │ a recursos protegidos      │ Tokens sem pedir senha   │
+ ├───────────────────┼────────────────────────────┼──────────────────────────┤
+ │ Tempo de Vida     │ Muito curto (15 min)       │ Longo (7 a 30 dias)      │
+ ├───────────────────┼────────────────────────────┼──────────────────────────┤
+ │ Formato           │ JWT (Stateless, assinado)  │ Opaque Token / UUID v4   │
+ │                   │                            │ (Stateful, persistido)   │
+ ├───────────────────┼────────────────────────────┼──────────────────────────┤
+ │ Armazenamento     │ Memória RAM do App/State   │ HttpOnly + Secure Cookie │
+ │ no Cliente        │ (Inacessível por JS/XSS)   │ (Protegido contra XSS)   │
+ └───────────────────┴────────────────────────────┴──────────────────────────┘
 
-```
+ ```
 
-### Por que especializar as classes de erro de Domínio?
+## 2. A Mecânica da Renovação Silenciosa (Silent Refresh)
 
-1. Semântica Clara no Use Case: O Use Case lança throw new NotFoundError('Usuário não encontrado') ou throw new ConflictError('E-mail já está em uso') em vez de hardcodear códigos HTTP numéricos soltos (404, 409).
-
-2. Desacoplamento do Protocolo: A camada de aplicação sinaliza o que aconteceu de errado conceitualmente, enquanto o errorHandler na borda (Infraestrutura) decide a tradução para o protocolo HTTP.
-
-## O Funcionamento do Funil (Middleware Global)
-
-O errorHandler no Express atua como o ponto central de convergência (Single Point of Failure Handler). No Express, qualquer middleware que receba exatamente 4 parâmetros (error, req, res, next) é reconhecido como o manipulador global de exceções.
-
-A Ordem de Processamento no Funil:
-
-1. Checagem de AppError (Domínio/Aplicação):
-
-Se o erro for uma instância de AppError (ou de suas filhas NotFoundError, ConflictError), o middleware extrai a mensagem, o status code configurado e os detalhes operacionais, retornando imediatamente.
-
-2. Checagem de ZodError (Borda / Validação):
-
-Se uma exceção do Zod escapou ou foi repassada pelo middleware de validação, o funil a captura, formata a lista de campos inválidos e responde com 400 Bad Request.
-
-3. Checagem de PrismaClientKnownRequestError (Infraestrutura):
-
-Se o repositório tentou executar uma query que violou restrições do banco (ex: chave única P2002 ou registro inexistente P2025), o PrismaErrorMapper intercepta e traduz o código do banco em uma mensagem de domínio legível.
-
-4. Fallback do Desenvolvedor (Erro Inesperado - 500):
-
-Se o erro não se encaixar em nenhuma das categorias acima, significa que é um bug de código ou uma falha física de infraestrutura. O middleware registra o erro no console/logger e responde com 500 Internal Server Error, mascarando os detalhes internos.
-
-### Hierarquia e Mapeamento de Erros no Funil HTTP
+Para o usuário final, a renovação deve ser completamente invisível. O sistema opera em um ciclo autônomo entre o Frontend (interceptores HTTP como Axios ou Fetch) e o Backend:
 
 ```txt
 
-             🌐 Requisição HTTP
-                      │
-                      ▼
- ┌──────────────────────────────────────────┐
- │         Middleware Global de Erros       │
- └────────────────────┬─────────────────────┘
-                      │
-   ┌──────────────────┼──────────────────┬──────────────────┐
-   │ (Instância de)   │ (Instância de)   │ (Instância de)   │ (Outros Erros)
-   ▼                  ▼                  ▼                  ▼
-AppError           ZodError        PrismaError        Error Generico
-   │                  │                  │                  │
- 400/404/409        400 Bad            Mapeado para        500 Internal
- Operacional        Request            AppError (409/404)  Server Error
- (Regra/Borda)      (Borda)            (Infraestrutura)   (Log do Sistema)
+Navegador / App Client                          APIs & Auth Gateway
+    │                                                   │
+    ├───── 1. Executa requisição com Access Token ─────►│
+    │◄──── 2. HTTP 401 Unauthorized (Token Expirado) ──┤  (Falha esperada)
+    │                                                   │
+    ├───── 3. POST /auth/refresh-token ────────────────►│
+    │      (Envia o Refresh Token no Cookie HttpOnly)   │  (Valida no Banco/Cache)
+    │                                                   │
+    │◄──── 4. Retorna NOVO Access Token (200 OK) ───────┤
+    │                                                   │
+    └───── 5. Repete a requisição original #1 ─────────►│  (Sucesso transparente para o usuário!)
 
 ```
 
-## Refatoração Prática da Hierarquia de Erros de Domínio
+### O Conceito de Refresh Token Rotation (Rotacionamento)
 
-1. Atualizando a Classe Base AppError (src/domain/errors/app-error.ts)
+Por que apenas validar o Refresh Token não basta? Se um atacante roubar o Refresh Token, ele poderá renovar a sessão para sempre.
+
+Para mitigar isso, aplicamos a Rotação de Refresh Tokens:
+
+1. Toda vez que a rota POST /auth/refresh-token é chamada, o servidor invalida/queima o Refresh Token utilizado.
+
+2. Emite um novo par: um novo Access Token E um novo Refresh Token.
+
+3. Se o mesmo Refresh Token for reutilizado uma segunda vez, o servidor detecta uma tentativa de roubo ou reuso indevido (Reuse Detection) e invalida todas as sessões e tokens daquele usuário imediatamente.
+
+## 3. A Teoria da Revogação: Como Quebrar a Natureza Stateless do JWT?
+
+O maior dilema teórico do JWT é que ele é autocontido (stateless). Uma vez emitido e assinado criptograficamente com a chave secreta, o servidor de aplicação não consulta o banco de dados para saber se o token é válido — ele apenas verifica a assinatura matemática e o tempo de expiração (exp).
+
+> "Se o JWT é validado apenas pela assinatura sem olhar o banco, o que acontece se o usuário clicar em 'Sair' (Logout), for demitido ou for banido pelo Administrador?"
+
+Sem um mecanismo de revogação, o token continuará válido na mão do cliente até que o tempo do exp expire!
+
+### Estratégia de Invalidação Ativa: A Blacklist Efêmera
+
+Para resolver esse problema sem perder a performance e a escalabilidade do JWT, criamos uma Blacklist (Lista de Tokens Revogados):
+
+```txt
+
+ ┌─────────────────────────────────────────────────────────────────────────┐
+ │                   MECANISMO DE BLACKLIST NO MIDDLEWARE                  │
+ └─────────────────────────────────────────────────────────────────────────┘
+
+  Requisição HTTP ──► [ Middleware ensureAuthenticated ]
+                             │
+                             ├─ 1. Checa se o Token está na BLACKLIST (Memory/Redis)
+                             │     ├── SIM ──► HTTP 401 Unauthorized ("Sessão Encerrada")
+                             │     └── NÃO ──► Continua validação...
+                             │
+                             └─ 2. Valida Assinatura Criptográfica & Expiração JWT
+                                   └── OK ──► Anexa req.user e avança pro Controller
+
+```
+
+Por que usar Redis/In-Memory com TTL (Time-To-Live) na Blacklist?
+
+Não precisamos guardar o token na Blacklist para sempre. Se um Access Token expira em 15 minutos e o usuário clica em Logout no minuto 2:
+
+- Guardamos a hash do token na Blacklist com um tempo de vida (TTL) de apenas 13 minutos (o tempo restante até a expiração natural do JWT).
+
+- Após 13 minutos, a memória limpa a chave automaticamente, mantendo a Blacklist leve, ultra-rápida e eficiente!
+
+## 4. Como Tudo Isso se Encaixa na Clean Architecture?
+
+Para evitar que bibliotecas externas de cache (como Redis) ou do banco (Prisma) poluam as regras de negócio, aplicamos o Princípio da Inversão de Dependência (DIP) na camada de segurança:
+
+```txt
+
+🟢 CAMADA DE DOMÍNIO (domain/)
+    ├── Entities/RefreshToken.ts ──────► (Entidade de negócio representando a renovação)
+    └── Repositories/TokenRepository.ts ─► (Interface/Contrato: invalidateToken e isTokenInvalidated)
+
+ 🔵 CAMADA DE APLICAÇÃO (application/)
+    ├── UseCases/RefreshTokenUseCase.ts (Aplica a regra de rotacionamento)
+    └── UseCases/LogoutUseCase.ts ───── (Aciona o expurgo do token no repositório)
+
+ 🔴 CAMADA DE INFRAESTRUTURA (infrastructure/)
+    ├── Database/RedisTokenRepository.ts (Implementação concreta e ultra-rápida em memória)
+    └── Middlewares/ensureAuthenticated.ts (Consome a interface TokenRepository via Injeção)
+
+```
+
+## Anatomia da Estratégia de Renovação
+
+```txt
+
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │                               FLUXO DE REFRESH TOKEN                             │
+ └──────────────────────────────────────────────────────────────────────────────────┘
+
+   Cliente (Frontend)                                   API (PokéManager)
+         │                                                      │
+         ├─────── 1. POST /auth/sessions (Email/Senha) ────────►│
+         │◄────── 2. Retorna AccessToken (15m) + RefreshToken ──┤
+         │                                                      │
+         │   ... 15 minutos se passam (AccessToken expira) ...  │
+         │                                                      │
+         ├─────── 3. GET /addresses/01001000 ──────────────────►│
+         │◄────── 4. HTTP 401 Unauthorized (Token Expirado) ────┤
+         │                                                      │
+         ├─────── 5. POST /auth/refresh-token (RefreshToken) ──►│
+         │◄────── 6. Valida no Banco/Cache e gera novo Par ─────┤
+
+```
+
+## Live Coding Hands-on
+
+1. Entidade e Interface do Repositório no Domínio
+
+A. Interface do Repositório de Tokens (src/domain/repositories/token-repository.ts)
 
 ```ts
 
-// src/domain/errors/app-error.ts
-export abstract class AppError {
-  public readonly message: string;
-  public readonly statusCode: number;
-  public readonly details?: unknown;
+export interface RefreshTokenData {
+  id: string;
+  token: string;
+  userId: string;
+  expiresIn: Date;
+}
 
-  constructor(message: string, statusCode = 400, details?: unknown) {
-    this.message = message;
-    this.statusCode = statusCode;
-    this.details = details;
+export interface TokenRepository {
+  // Operações de Refresh Token
+  createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData>;
+  findRefreshToken(token: string): Promise<RefreshTokenData | null>;
+  deleteRefreshTokenByUserId(userId: string): Promise<void>;
+
+  // Operações de Blacklist (Invalidação de Access Tokens)
+  invalidateToken(token: string, ttlInSeconds: number): Promise<void>;
+  isTokenInvalidated(token: string): Promise<boolean>;
+}
+
+```
+
+2. Implementação do Repositório na Infraestrutura (Prisma + Memória)
+
+Atenção: Utilizamos um Set em memória como estratégia leve de Blacklist para o ambiente de dev/aula, extensível para Redis em produção.
+
+```ts
+
+// src/infrastructure/database/prisma/repositories/prisma-token.repository.ts
+import { TokenRepository, RefreshTokenData } from '@domain/repositories/token-repository';
+import { prisma } from '../prisma-client';
+
+export class PrismaTokenRepository implements TokenRepository {
+  // Armazenamento em memória efêmero para a Blacklist de Access Tokens
+  private static blacklist = new Set<string>();
+
+  async createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData> {
+    // Remove tokens antigos do mesmo usuário para manter apenas uma sessão ativa por simplicidade
+    await this.deleteRefreshTokenByUserId(userId);
+
+    const refreshToken = await prisma.refreshToken.create({
+      data: {
+        userId,
+        token,
+        expiresIn,
+      },
+    });
+
+    return refreshToken;
+  }
+
+  async findRefreshToken(token: string): Promise<RefreshTokenData | null> {
+    const refreshToken = await prisma.refreshToken.findUnique({
+      where: { token },
+    });
+
+    return refreshToken;
+  }
+
+  async deleteRefreshTokenByUserId(userId: string): Promise<void> {
+    await prisma.refreshToken.deleteMany({
+      where: { userId },
+    });
+  }
+
+  async invalidateToken(token: string, ttlInSeconds: number): Promise<void> {
+    PrismaTokenRepository.blacklist.add(token);
+
+    // Remove automaticamente da memória após o TTL (tempo restante de vida do JWT)
+    setTimeout(() => {
+      PrismaTokenRepository.blacklist.delete(token);
+    }, ttlInSeconds * 1000);
+  }
+
+  async isTokenInvalidated(token: string): Promise<boolean> {
+    return PrismaTokenRepository.blacklist.has(token);
   }
 }
 
 ```
 
-2. Criando as Exceções Especializadas de Domínio
+3. Use Cases da Aplicação
+
+A. Use Case: Contexto do Usuário Logado (src/application/useCases/get-current-user.use-case.ts)
 
 ```ts
 
-// src/domain/errors/not-found-error.ts
-import { AppError } from './app-error';
+// src/application/useCases/get-current-user.use-case.ts
+import { IUserRepository } from '@domain/repositories/user.repository';
+import { GetUserResponseDTO } from './get-user-by-id.use-case';
+import { NotFoundError } from '@domain/errors/notFound.error';
 
-export class NotFoundError extends AppError {
-  constructor(entityName: string) {
-    super(`${entityName} não encontrado(a)`, 404);
-  }
-}
+export class GetCurrentUserUseCase {
+  constructor(private readonly userRepository: IUserRepository) {}
 
-// src/domain/errors/conflict-error.ts
-import { AppError } from './app-error';
-
-export class ConflictError extends AppError {
-  constructor(message: string) {
-    super(message, 409);
-  }
-}
-
-// src/domain/errors/unauthorized-error.ts
-import { AppError } from './app-error';
-
-export class UnauthorizedError extends AppError {
-  constructor(message = 'Não autorizado') {
-    super(message, 401);
-  }
-}
-
-```
-
-3. Exemplo de Uso nos Use Cases de Domínio
-
-Veja como o código dos Casos de Uso ganha leitura expressiva e limpa:
-
-```ts
-
-// src/application/useCases/getUserById.ts
-import { UserRepository } from '@domain/repositories/user.repository';
-import { User } from '@domain/entities/user';
-import { NotFoundError } from '@domain/errors/not-found-error';
-
-export class GetUserByIdUseCase {
-  constructor(private readonly userRepository: UserRepository) {}
-
-  async execute(id: string): Promise<User> {
-    const user = await this.userRepository.findById(id);
+  async execute(userId: string): Promise<GetUserResponseDTO> {
+    const user = await this.userRepository.findById(userId);
 
     if (!user) {
-      // Usa a exceção semântica de Domínio
       throw new NotFoundError('Usuário');
     }
 
-    return user;
+    return {
+      id: user.id!,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
   }
 }
 
 ```
 
+B. Use Case: Renovação de Token com Rotação (src/application/useCases/refresh-token.use-case.ts)
+
 ```ts
 
-// src/application/useCases/createUser.ts
-import { UserRepository } from '@domain/repositories/user.repository';
-import { ConflictError } from '@domain/errors/conflict-error';
+// src/application/useCases/refresh-token.use-case.ts
+import { TokenRepository } from '@domain/repositories/token-repository';
+import { IUserRepository } from '@domain/repositories/user.repository';
+import { UnauthorizedError } from '@domain/errors/unauthorized-error';
+import { sign } from 'jsonwebtoken';
+import { randomUUID } from 'crypto';
 
-export class CreateUserUseCase {
-  constructor(private readonly userRepository: UserRepository) {}
+interface RefreshTokenDTO {
+  refreshToken: string;
+}
 
-  async execute(data: { name: string; email: string }) {
-    const userExists = await this.userRepository.findByEmail(data.email);
+interface RefreshTokenResponse {
+  token: string;
+  refreshToken: string;
+}
 
-    if (userExists) {
-      // Sinaliza conflito sem precisar citar o status HTTP 409 explicitamente
-      throw new ConflictError('Já existe um usuário cadastrado com este e-mail');
+export class RefreshTokenUseCase {
+  constructor(
+    private readonly tokenRepository: TokenRepository,
+    private readonly userRepository: IUserRepository
+  ) {}
+
+  async execute({ refreshToken }: RefreshTokenDTO): Promise<RefreshTokenResponse> {
+    // 1. Busca o Refresh Token no banco
+    const storedToken = await this.tokenRepository.findRefreshToken(refreshToken);
+
+    if (!storedToken) {
+      throw new UnauthorizedError('Refresh Token inválido');
     }
 
-    return this.userRepository.create(data);
-  }
-}
-
-```
-
-## Live Coding: Conectando a Infraestrutura ao Funil de Erros
-
-### Passo 1: Mapeador de Erros do Prisma (src/infrastructure/database/prisma/prisma-error-mapper.ts)
-
-Quando o banco de dados rejeita uma operação (por exemplo, um e-mail duplicado ou uma chave estrangeira inválida), o Prisma lança uma exceção da classe PrismaClientKnownRequestError.
-
-Criaremos uma classe utilitária responsável por traduzir esses códigos numéricos do Prisma (P2002, P2025, P2003) em exceções limpas do nosso domínio (ConflictError, NotFoundError, AppError):
-
-```ts
-
-// src/infrastructure/database/prisma/prisma-error-mapper.ts
-import { Prisma } from '@prisma/client';
-import { AppError } from '@domain/errors/app-error';
-import { ConflictError } from '@domain/errors/conflict-error';
-import { NotFoundError } from '@domain/errors/not-found-error';
-
-export class PrismaErrorMapper {
-  static toAppError(error: Prisma.PrismaClientKnownRequestError): AppError {
-    switch (error.code) {
-      case 'P2002': {
-        // Violação de constraint Única (Unique constraint)
-        const target = (error.meta?.target as string[])?.join(', ') || 'campo';
-        return new ConflictError(`Já existe um registro cadastrado com este ${target}`);
-      }
-      case 'P2025': {
-        // Registro não encontrado para atualização ou exclusão
-        return new NotFoundError('Registro no banco de dados');
-      }
-      case 'P2003': {
-        // Violação de Chave Estrangeira (Foreign key constraint)
-        return new AppError('Relacionamento inválido. O recurso associado não existe', 400);
-      }
-      default:
-        // Caso ocorra algum erro do Prisma não mapeado explicitamente
-        return new AppError('Erro ao processar operação no banco de dados', 500);
+    // 2. Valida se expirou
+    if (new Date() > storedToken.expiresIn) {
+      await this.tokenRepository.deleteRefreshTokenByUserId(storedToken.userId);
+      throw new UnauthorizedError('Refresh Token expirado. Faça login novamente.');
     }
+
+    // 3. Busca o usuário associado
+    const user = await this.userRepository.findById(storedToken.userId);
+    if (!user) {
+      throw new UnauthorizedError('Usuário não encontrado');
+    }
+
+    // 4. Gera novo Access Token JWT curto (15 min)
+    const jwtSecret = process.env.JWT_SECRET || 'default_secret';
+    const newToken = sign({ role: user.role }, jwtSecret, {
+      subject: user.id,
+      expiresIn: '15m',
+    });
+
+    // 5. Rotação de Refresh Token (Emite um novo e queima o anterior)
+    const newRefreshTokenString = randomUUID();
+    const expiresInDays = 7;
+    const expiresDate = new Date();
+    expiresDate.setDate(expiresDate.getDate() + expiresInDays);
+
+    await this.tokenRepository.createRefreshToken(user.id!, newRefreshTokenString, expiresDate);
+
+    return {
+      token: newToken,
+      refreshToken: newRefreshTokenString,
+    };
   }
 }
 
 ```
 
-### Passo 2: O Middleware Global de Erros Refatorado (src/infrastructure/http/middlewares/error-handler.ts)
-
-Agora, atualizamos o nosso errorHandler para atuar como o Funil Unificado de Exceções. Ele tratará em ordem de prioridade:
-
-1. AppError: Erros de Domínio e Regras de Negócio (NotFoundError, ConflictError, etc.).
-
-2. ZodError: Falhas de validação de borda.
-
-3. PrismaClientKnownRequestError: Exceções do banco de dados interceptadas pelo PrismaErrorMapper.
-
-4. Erro Não Tratado (500): Fallback para bugs imprevistos de sistema.
+4. Controllers HTTP
 
 ```ts
 
-// src/infrastructure/http/middlewares/error-handler.ts
+// src/infrastructure/http/controllers/auth-advanced.controller.ts
 import { Request, Response, NextFunction } from 'express';
-import { ZodError } from 'zod';
-import { Prisma } from '@prisma/client';
-import { AppError } from '@domain/errors/app-error';
-import { PrismaErrorMapper } from '@infrastructure/database/prisma/prisma-error-mapper';
+import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
+import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
+import { TokenRepository } from '@domain/repositories/token-repository';
 
-export const errorHandler = (
-  error: Error,
-  _req: Request,
-  res: Response,
-  _next: NextFunction
-): Response => {
-  // 1. Erros Operacionais de Domínio e Regras de Negócio Mapeadas
-  if (error instanceof AppError) {
-    const responsePayload: Record<string, unknown> = {
-      status: 'error',
-      message: error.message,
+export class AuthAdvancedController {
+  constructor(
+    private readonly getCurrentUserUseCase: GetCurrentUserUseCase,
+    private readonly refreshTokenUseCase: RefreshTokenUseCase,
+    private readonly tokenRepository: TokenRepository
+  ) {}
+
+  // GET /auth/me
+  async me(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
+    try {
+      const userId = req.user!.id;
+      const user = await this.getCurrentUserUseCase.execute(userId);
+      return res.status(200).json({ data: user });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // POST /auth/refresh-token
+  async refreshToken(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
+    try {
+      const { refreshToken } = req.body;
+      const result = await this.refreshTokenUseCase.execute({ refreshToken });
+      return res.status(200).json({ data: result });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // POST /auth/logout
+  async logout(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
+    try {
+      const authHeader = req.headers.authorization;
+      if (authHeader) {
+        const [, token] = authHeader.split(' ');
+        // Adiciona na Blacklist por 15 minutos (900s)
+        await this.tokenRepository.invalidateToken(token, 900);
+      }
+
+      return res.status(200).json({ message: 'Sessão encerrada com sucesso!' });
+    } catch (error) {
+      next(error);
+    }
+  }
+}
+
+```
+
+5. Atualização do Middleware ensureAuthenticated com Blacklist
+
+```ts
+
+// src/infrastructure/http/middlewares/ensure-authenticated.ts
+import { Request, Response, NextFunction } from 'express';
+import { verify } from 'jsonwebtoken';
+import { UnauthorizedError } from '@domain/errors/unauthorized-error';
+import { PrismaTokenRepository } from '@infrastructure/database/prisma/repositories/prisma-token.repository';
+
+const tokenRepository = new PrismaTokenRepository();
+
+export const ensureAuthenticated = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    throw new UnauthorizedError('Token JWT não fornecido');
+  }
+
+  const [, token] = authHeader.split(' ');
+
+  // 1. Checagem de Revogação (Blacklist)
+  const isInvalidated = await tokenRepository.isTokenInvalidated(token);
+  if (isInvalidated) {
+    throw new UnauthorizedError('Sessão encerrada. Faça login novamente.');
+  }
+
+  // 2. Validação da Assinatura Criptográfica e Expiração
+  try {
+    const jwtSecret = process.env.JWT_SECRET || 'default_secret';
+    const decoded = verify(token, jwtSecret) as { sub: string; role: string };
+
+    req.user = {
+      id: decoded.sub,
+      role: decoded.role,
     };
 
-    if (error.details !== undefined && error.details !== null) {
-      responsePayload.details = error.details;
-    }
-
-    return res.status(error.statusCode).json(responsePayload);
+    return next();
+  } catch {
+    throw new UnauthorizedError('Token JWT inválido ou expirado');
   }
-
-  // 2. Erros de Validação da Borda (Zod)
-  if (error instanceof ZodError) {
-    const issueDetails = error.issues.map((issue) => ({
-      field: issue.path.join('.'),
-      message: issue.message,
-    }));
-
-    return res.status(400).json({
-      status: 'error',
-      message: 'Dados de entrada inválidos',
-      details: issueDetails,
-    });
-  }
-
-  // 3. Erros Conhecidos de Infraestrutura / Banco de Dados (Prisma)
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    const appError = PrismaErrorMapper.toAppError(error);
-    return res.status(appError.statusCode).json({
-      status: 'error',
-      message: appError.message,
-    });
-  }
-
-  // 4. Erros Desconhecidos ou Críticos de Sistema (500 Internal Server Error)
-  console.error('💥 [Unhandled System Error]:', error);
-
-  return res.status(500).json({
-    status: 'error',
-    message: 'Erro interno do servidor',
-  });
 };
 
 ```
 
-### Passo 3: Registrando o errorHandler na Aplicação (src/main/app.ts ou server.ts)
-
-O middleware de erro DEVE obrigatoriamente ser registrado APÓS todas as rotas da aplicação.
+6. Rotas com Swagger Autogen (src/infrastructure/http/routes/auth-routes.ts)
 
 ```ts
 
-// src/main/app.ts
-import express from 'express';
-import 'express-async-errors'; // Garante a captura automática de erros em funções assíncronas
-import { userRoutes } from '@infrastructure/http/routes/user-routes';
-import { errorHandler } from '@infrastructure/http/middlewares/error-handler';
+// src/infrastructure/http/routes/auth-routes.ts
+import { Router } from 'express';
+import { ensureAuthenticated } from '../middlewares/ensure-authenticated';
+import { makeAuthAdvancedController } from '@main/factories/make-auth-advanced-controller';
 
-const app = express();
+const authRoutes = Router();
+const controller = makeAuthAdvancedController();
 
-app.use(express.json());
+// GET /auth/me
+authRoutes.get('/me', ensureAuthenticated, (req, res, next) => {
+  /*
+    #swagger.tags = ['Autenticação']
+    #swagger.summary = 'Retorna o perfil do usuário logado'
+    #swagger.security = [{ "bearerAuth": [] }]
+    #swagger.responses[200] = { description: 'Perfil recuperado com sucesso' }
+    #swagger.responses[401] = { description: 'Não autenticado' }
+  */
+  return controller.me(req, res, next);
+});
 
-// Registro das Rotas da Aplicação
-app.use('/api/v1/users', userRoutes);
+// POST /auth/refresh-token
+authRoutes.post('/refresh-token', (req, res, next) => {
+  /*
+    #swagger.tags = ['Autenticação']
+    #swagger.summary = 'Renova o Access Token JWT utilizando o Refresh Token'
+    #swagger.parameters['body'] = {
+      in: 'body',
+      required: true,
+      schema: { refreshToken: 'uuid-do-refresh-token' }
+    }
+    #swagger.responses[200] = { description: 'Tokens renovados com sucesso' }
+    #swagger.responses[401] = { description: 'Refresh token inválido ou expirado' }
+  */
+  return controller.refreshToken(req, res, next);
+});
 
-// 🛑 O Middleware Global de Erros DEVE ser a ÚLTIMA declaração do app!
-app.use(errorHandler);
+// POST /auth/logout
+authRoutes.post('/logout', ensureAuthenticated, (req, res, next) => {
+  /*
+    #swagger.tags = ['Autenticação']
+    #swagger.summary = 'Encerra a sessão e revoga o Access Token atual'
+    #swagger.security = [{ "bearerAuth": [] }]
+    #swagger.responses[200] = { description: 'Sessão encerrada com sucesso' }
+  */
+  return controller.logout(req, res, next);
+});
 
-export { app };
+export { authRoutes };
+
+```
+
+7. Factory makeAuthAdvancedController src/main/factories/make-auth-advanced-controller.ts
+
+```ts
+
+// src/main/factories/make-auth-advanced-controller.ts
+import { PrismaUserRepository } from '@infrastructure/database/prisma/repositories/prisma-user.repository';
+import { PrismaTokenRepository } from '@infrastructure/database/prisma/repositories/prisma-token.repository';
+import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
+import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
+import { AuthAdvancedController } from '@infrastructure/http/controllers/auth-advanced.controller';
+
+export const makeAuthAdvancedController = (): AuthAdvancedController => {
+  // 1. Instanciação dos Repositórios da camada de Infraestrutura
+  const userRepository = new PrismaUserRepository();
+  const tokenRepository = new PrismaTokenRepository();
+
+  // 2. Instanciação dos Use Cases injetando as dependências de repositório (DIP)
+  const getCurrentUserUseCase = new GetCurrentUserUseCase(userRepository);
+  const refreshTokenUseCase = new RefreshTokenUseCase(tokenRepository, userRepository);
+
+  // 3. Instanciação do Controller agregando os Use Cases e o Repositório para Logout/Blacklist
+  return new AuthAdvancedController(
+    getCurrentUserUseCase,
+    refreshTokenUseCase,
+    tokenRepository
+  );
+};
 
 ```

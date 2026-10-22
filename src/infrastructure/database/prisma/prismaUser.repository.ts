@@ -2,16 +2,13 @@ import { User } from '@domain/entities/user';
 import { IUserRepository } from '@domain/repositories/user.repository';
 import { User as PrismaUser } from '@prisma/client';
 import { prisma } from './client';
+import { PrismaUserMapper } from './prismaUser.mapper';
 
 export class PrismaUserRepository implements IUserRepository {
-  async create(user: User): Promise<void> {
-    await prisma.user.create({
-      data: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-      },
-    });
+  async create(user: User): Promise<User> {
+    const data = PrismaUserMapper.toPrisma(user);
+    const created = await prisma.user.create({ data });
+    return PrismaUserMapper.toDomain(created);
   }
 
   async findByEmail(email: string): Promise<User | null> {
@@ -23,23 +20,14 @@ export class PrismaUserRepository implements IUserRepository {
       return null;
     }
 
-    return new User({
-      id: userRaw.id,
-      name: userRaw.name,
-      email: userRaw.email,
-    });
+    return PrismaUserMapper.toDomain(userRaw);
   }
 
   async findAll(): Promise<User[]> {
     const usersRaw = await prisma.user.findMany();
 
-    return usersRaw.map(
-      (userRaw: PrismaUser) =>
-        new User({
-          id: userRaw.id,
-          name: userRaw.name,
-          email: userRaw.email,
-        }),
+    return usersRaw.map((userRaw: PrismaUser) =>
+      PrismaUserMapper.toDomain(userRaw),
     );
   }
 
@@ -52,10 +40,6 @@ export class PrismaUserRepository implements IUserRepository {
       return null;
     }
 
-    return new User({
-      id: userRaw.id,
-      name: userRaw.name,
-      email: userRaw.email,
-    });
+    return PrismaUserMapper.toDomain(userRaw);
   }
 }

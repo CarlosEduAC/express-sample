@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Serviço 1: A Nossa Manager API (Node.js + TS)
   api:
