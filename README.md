@@ -1,540 +1,469 @@
-# Renovação com Refresh Tokens, Revogação e Rota
+# Segurança Defensiva de APIs & Gestão de Configurações
 
-Em sistemas corporativos, emitir um token JWT no momento do login é apenas o primeiro passo de uma estratégia de segurança. O verdadeiro desafio de engenharia começa depois do login: como manter a sessão segura ao longo do tempo sem degradar a experiência do usuário (UX) e sem violar os princípios da Clean Architecture?
+## Hardening de Borda
 
-## O Dilema da Expiração: Segurança vs. Usabilidade
+O Hardening de Borda é o processo de fortificar os dispositivos que ficam no limite entre a sua rede interna e a internet pública (como roteadores de borda, firewalls e gateways). O principal objetivo é reduzir a superfície de ataque, eliminando serviços desnecessários e aplicando configurações estritas para evitar invasões, abusos ou indisponibilidade da rede.
 
-Projetar o tempo de vida (Time-to-Live - TTL) de um token é um jogo de balanço entre dois riscos opostos:
+Na Clean Architecture, a camada de Borda (Edge Layer ou Camada de Entrada) é o primeiro ponto de contato entre a internet aberta e o núcleo do sistema. Hardening de Borda consiste em eliminar vetores de ataque comuns antes que a requisição gaste ciclos de CPU do domínio ou toque no banco de dados.
 
-```txt
-
-🔴 Access Token com Vida Longa (ex: 30 dias)
- ├─ Vantagem: O usuário raramente precisa digitar a senha (ótima UX).
- └─ Perigo: Se o token for roubado (via script malicioso XSS ou intercepção), o atacante
-    terá 30 dias de acesso irrestrito. Você não consegue derrubar a sessão do invasor.
-
- 🔴 Access Token com Vida Curta (ex: 15 minutos)
- ├─ Vantagem: Se interceptado, a janela de ataque fecha rapidamente.
- └─ Perigo: A cada 15 minutos o usuário é deslogado abruptamente e precisa refazer o login (pessíma UX).
-
-```
-
-### A Solução Industrial: A Estratégia de Tokens Duplos
-
-Para resolver esse dilema, a indústria adota o padrão de Tokens Duplos, onde cada token desempenha um papel cirúrgico na arquitetura:
+O OWASP API Security Top 10 é o projeto da OWASP Foundation que cataloga as vulnerabilidades e os riscos mais críticos de segurança em Interfaces de Programação de Aplicações (APIs).
 
 ```txt
 
- ┌───────────────────────────────────────────────────────────────────────────┐
- │                      COMPARAÇÃO DE PAPÉIS DOS TOKENS                      │
- ├───────────────────┬────────────────────────────┬──────────────────────────┤
- │ Característica    │ Access Token               │ Refresh Token            │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Finalidade        │ Autorizar requisições HTTP │ Emitir novos Access      │
- │                   │ a recursos protegidos      │ Tokens sem pedir senha   │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Tempo de Vida     │ Muito curto (15 min)       │ Longo (7 a 30 dias)      │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Formato           │ JWT (Stateless, assinado)  │ Opaque Token / UUID v4   │
- │                   │                            │ (Stateful, persistido)   │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Armazenamento     │ Memória RAM do App/State   │ HttpOnly + Secure Cookie │
- │ no Cliente        │ (Inacessível por JS/XSS)   │ (Protegido contra XSS)   │
- └───────────────────┴────────────────────────────┴──────────────────────────┘
-
- ```
-
-## 2. A Mecânica da Renovação Silenciosa (Silent Refresh)
-
-Para o usuário final, a renovação deve ser completamente invisível. O sistema opera em um ciclo autônomo entre o Frontend (interceptores HTTP como Axios ou Fetch) e o Backend:
-
-```txt
-
-Navegador / App Client                          APIs & Auth Gateway
-    │                                                   │
-    ├───── 1. Executa requisição com Access Token ─────►│
-    │◄──── 2. HTTP 401 Unauthorized (Token Expirado) ──┤  (Falha esperada)
-    │                                                   │
-    ├───── 3. POST /auth/refresh-token ────────────────►│
-    │      (Envia o Refresh Token no Cookie HttpOnly)   │  (Valida no Banco/Cache)
-    │                                                   │
-    │◄──── 4. Retorna NOVO Access Token (200 OK) ───────┤
-    │                                                   │
-    └───── 5. Repete a requisição original #1 ─────────►│  (Sucesso transparente para o usuário!)
+      REQUISIÇÃO EXTERNA (Hostil / Neutra / Amigável)
+                           │
+                           ▼
+ ┌───────────────────────────────────────────────────┐
+ │  1. Helmet (Headers)    -> Camuflagem & Transporte│
+ │  2. CORS                -> Isolamento de Origem   │  BARREIRAS
+ │  3. Rate Limiting       -> Controle de Frequência │  DE BORDA
+ │  4. Input Sanitization  -> Assepsia de Payload    │
+ └─────────────────────────┬─────────────────────────┘
+                           │  Requisição Legítima e Filtrada
+                           ▼
+                  Controller & Use Case
 
 ```
 
-### O Conceito de Refresh Token Rotation (Rotacionamento)
+### 1. Camuflagem e Transporte Seguro: Helmet
 
-Por que apenas validar o Refresh Token não basta? Se um atacante roubar o Refresh Token, ele poderá renovar a sessão para sempre.
+O Express, por padrão, expõe cabeçalhos informativos como X-Powered-By: Express. Para um atacante, isso informa a tecnologia exata, permitindo buscar vulnerabilidades específicas conhecidas (CVEs) para aquela versão.
 
-Para mitigar isso, aplicamos a Rotação de Refresh Tokens:
+O Helmet atua injetando um conjunto de cabeçalhos de resposta HTTP defensivos:
 
-1. Toda vez que a rota POST /auth/refresh-token é chamada, o servidor invalida/queima o Refresh Token utilizado.
+- HSTS (Strict-Transport-Security): Força o navegador a se comunicar exclusivamente via HTTPS, impedindo ataques de interceptação Man-in-the-Middle (MitM) e downgrade de protocolo (SSL Stripping).
 
-2. Emite um novo par: um novo Access Token E um novo Refresh Token.
+- X-Content-Type-Options: nosniff: Impede que navegadores tentem adivinhar (MIME sniffing) o tipo de arquivo de uma resposta. Se a API responde com JSON, o cliente é obrigado a tratá-lo como JSON, bloqueando a execução de scripts embutidos disfarçados de texto.
 
-3. Se o mesmo Refresh Token for reutilizado uma segunda vez, o servidor detecta uma tentativa de roubo ou reuso indevido (Reuse Detection) e invalida todas as sessões e tokens daquele usuário imediatamente.
+- X-Frame-Options: SAMEORIGIN / DENY: Previne ataques de Clickjacking, proibindo que a sua aplicação ou documentação seja incorporada dentro de `<frame>`, `<iframe>` ou `<embed>` em sites de terceiros.
 
-## 3. A Teoria da Revogação: Como Quebrar a Natureza Stateless do JWT?
+Obs: O clickjacking (ou sequestro de cliques) é uma técnica de ataque cibernético na qual a vítima é induzida a clicar em um botão, link ou elemento oculto ou transparente sobreposto em uma página legítima.
 
-O maior dilema teórico do JWT é que ele é autocontido (stateless). Uma vez emitido e assinado criptograficamente com a chave secreta, o servidor de aplicação não consulta o banco de dados para saber se o token é válido — ele apenas verifica a assinatura matemática e o tempo de expiração (exp).
+### 2. Controle de Acesso por Origem: CORS (Cross-Origin Resource Sharing)
 
-> "Se o JWT é validado apenas pela assinatura sem olhar o banco, o que acontece se o usuário clicar em 'Sair' (Logout), for demitido ou for banido pelo Administrador?"
+CORS não é uma ferramenta para proteger a API de ferramentas de linha de comando como curl ou Postman (que não respeitam regras de navegador); CORS é uma instrução para o navegador do usuário.
 
-Sem um mecanismo de revogação, o token continuará válido na mão do cliente até que o tempo do exp expire!
+- O Risco: Sem CORS restritivo (Access-Control-Allow-Origin: *), um site malicioso visitado pelo usuário pode emitir chamadas assíncronas via fetch contra a sua API utilizando a sessão/cookies legítimos do navegador.
 
-### Estratégia de Invalidação Ativa: A Blacklist Efêmera
+- A Solução: Whitelist explícita de domínios confiáveis. Apenas as origens listadas no servidor recebem autorização do navegador para ler as respostas de requisições de origem cruzada.
 
-Para resolver esse problema sem perder a performance e a escalabilidade do JWT, criamos uma Blacklist (Lista de Tokens Revogados):
+Obs: Podemos usar em conjunto ferramentas de Geolocalização ou CDNs para liberar o acesso para uma determinada região, por exemplo.
 
-```txt
+### 3. Mitigação de Força Bruta e DoS: Rate Limiting (OWASP API4:2023 - Unrestricted Resource Consumption)
 
- ┌─────────────────────────────────────────────────────────────────────────┐
- │                   MECANISMO DE BLACKLIST NO MIDDLEWARE                  │
- └─────────────────────────────────────────────────────────────────────────┘
+APIs sem limitação de frequência tornam-se alvos triviais para:
 
-  Requisição HTTP ──► [ Middleware ensureAuthenticated ]
-                             │
-                             ├─ 1. Checa se o Token está na BLACKLIST (Memory/Redis)
-                             │     ├── SIM ──► HTTP 401 Unauthorized ("Sessão Encerrada")
-                             │     └── NÃO ──► Continua validação...
-                             │
-                             └─ 2. Valida Assinatura Criptográfica & Expiração JWT
-                                   └── OK ──► Anexa req.user e avança pro Controller
+- Ataques de Força Bruta / Credential Stuffing: Robôs testando milhares de combinações de senhas por segundo no endpoint /auth/sessions.
 
-```
+- Exaustão de Recursos (DoS): Requisições em massa sobrecarregando conexões de banco de dados e CPU.
 
-Por que usar Redis/In-Memory com TTL (Time-To-Live) na Blacklist?
+A aplicação divide o controle de taxa em duas camadas:
 
-Não precisamos guardar o token na Blacklist para sempre. Se um Access Token expira em 15 minutos e o usuário clica em Logout no minuto 2:
+1. Rate Limiting de Borda Ampla: Protege a API como um todo (ex: 100 requisições a cada 15 minutos por IP).
 
-- Guardamos a hash do token na Blacklist com um tempo de vida (TTL) de apenas 13 minutos (o tempo restante até a expiração natural do JWT).
+2. Rate Limiting de Alta Sensibilidade: Focado estritamente em rotas de autenticação, recuperação de senha e emissão de tokens (ex: 5 tentativas a cada 5 minutos por IP).
 
-- Após 13 minutos, a memória limpa a chave automaticamente, mantendo a Blacklist leve, ultra-rápida e eficiente!
+### 4. Assepsia de Entrada: Sanitização de Payloads (OWASP API8:2023 - Security Misconfiguration / Injections)
 
-## 4. Como Tudo Isso se Encaixa na Clean Architecture?
+Enquanto a validação de esquema (Zod) valida a forma dos dados (tipo, tamanho e formato), a sanitização atua na assepsia semântica:
 
-Para evitar que bibliotecas externas de cache (como Redis) ou do banco (Prisma) poluam as regras de negócio, aplicamos o Princípio da Inversão de Dependência (DIP) na camada de segurança:
+NoSQL / SQL Injection: Bibliotecas como express-mongo-sanitize removem operadores reservados (como $where, $ e .) que poderiam ser interpretados como comandos se passados acidentalmente para bancos de dados baseados em documentos ou queries dinâmicas.
 
-```txt
+XSS Refletido / Armazenado: Impede que strings enviadas em campos de texto livre contenham tags como `<script>` ou eventos como onload=alert(), evitando que scripts sejam persistidos e executados na interface de outro cliente.
 
-🟢 CAMADA DE DOMÍNIO (domain/)
-    ├── Entities/RefreshToken.ts ──────► (Entidade de negócio representando a renovação)
-    └── Repositories/TokenRepository.ts ─► (Interface/Contrato: invalidateToken e isTokenInvalidated)
+### Configuração dos Middlewares de Segurança
 
- 🔵 CAMADA DE APLICAÇÃO (application/)
-    ├── UseCases/RefreshTokenUseCase.ts (Aplica a regra de rotacionamento)
-    └── UseCases/LogoutUseCase.ts ───── (Aciona o expurgo do token no repositório)
+**Dependências:**
 
- 🔴 CAMADA DE INFRAESTRUTURA (infrastructure/)
-    ├── Database/RedisTokenRepository.ts (Implementação concreta e ultra-rápida em memória)
-    └── Middlewares/ensureAuthenticated.ts (Consome a interface TokenRepository via Injeção)
+Instalação dos pacotes de segurança e de validação de ambiente:
+
+```bash
+
+npm install helmet cors express-rate-limit express-mongo-sanitize dotenv
+npm install -D @types/cors
 
 ```
 
-## Anatomia da Estratégia de Renovação
+1. Rate Limiting (src/infrastructure/http/middlewares/rate-limiter.ts)
 
-```txt
-
- ┌──────────────────────────────────────────────────────────────────────────────────┐
- │                               FLUXO DE REFRESH TOKEN                             │
- └──────────────────────────────────────────────────────────────────────────────────┘
-
-   Cliente (Frontend)                                   API (PokéManager)
-         │                                                      │
-         ├─────── 1. POST /auth/sessions (Email/Senha) ────────►│
-         │◄────── 2. Retorna AccessToken (15m) + RefreshToken ──┤
-         │                                                      │
-         │   ... 15 minutos se passam (AccessToken expira) ...  │
-         │                                                      │
-         ├─────── 3. GET /addresses/01001000 ──────────────────►│
-         │◄────── 4. HTTP 401 Unauthorized (Token Expirado) ────┤
-         │                                                      │
-         ├─────── 5. POST /auth/refresh-token (RefreshToken) ──►│
-         │◄────── 6. Valida no Banco/Cache e gera novo Par ─────┤
-
-```
-
-## Live Coding Hands-on
-
-1. Entidade e Interface do Repositório no Domínio
-
-A. Interface do Repositório de Tokens (src/domain/repositories/token-repository.ts)
+Evita ataques de força bruta no login e mitiga negação de serviço (DoS/DDoS):
 
 ```ts
 
-export interface RefreshTokenData {
-  id: string;
-  token: string;
-  userId: string;
-  expiresIn: Date;
-}
+// src/infrastructure/http/middlewares/rate-limiter.ts
+import rateLimit from 'express-rate-limit';
 
-export interface TokenRepository {
-  // Operações de Refresh Token
-  createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData>;
-  findRefreshToken(token: string): Promise<RefreshTokenData | null>;
-  deleteRefreshTokenByUserId(userId: string): Promise<void>;
+// Limitador global para rotas gerais da API
+export const apiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // Janela de 15 minutos
+  max: 100, // Limite de 100 requisições por IP por janela
+  standardHeaders: true, // Retorna headers 'RateLimit-*'
+  legacyHeaders: false,
+  message: {
+    status: 'error',
+    message: 'Muitas requisições originadas deste IP. Tente novamente em 15 minutos.',
+  },
+});
 
-  // Operações de Blacklist (Invalidação de Access Tokens)
-  invalidateToken(token: string, ttlInSeconds: number): Promise<void>;
-  isTokenInvalidated(token: string): Promise<boolean>;
-}
-
-```
-
-2. Implementação do Repositório na Infraestrutura (Prisma + Memória)
-
-Atenção: Utilizamos um Set em memória como estratégia leve de Blacklist para o ambiente de dev/aula, extensível para Redis em produção.
-
-```ts
-
-// src/infrastructure/database/prisma/repositories/prisma-token.repository.ts
-import { TokenRepository, RefreshTokenData } from '@domain/repositories/token-repository';
-import { prisma } from '../prisma-client';
-
-export class PrismaTokenRepository implements TokenRepository {
-  // Armazenamento em memória efêmero para a Blacklist de Access Tokens
-  private static blacklist = new Set<string>();
-
-  async createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData> {
-    // Remove tokens antigos do mesmo usuário para manter apenas uma sessão ativa por simplicidade
-    await this.deleteRefreshTokenByUserId(userId);
-
-    const refreshToken = await prisma.refreshToken.create({
-      data: {
-        userId,
-        token,
-        expiresIn,
-      },
-    });
-
-    return refreshToken;
-  }
-
-  async findRefreshToken(token: string): Promise<RefreshTokenData | null> {
-    const refreshToken = await prisma.refreshToken.findUnique({
-      where: { token },
-    });
-
-    return refreshToken;
-  }
-
-  async deleteRefreshTokenByUserId(userId: string): Promise<void> {
-    await prisma.refreshToken.deleteMany({
-      where: { userId },
-    });
-  }
-
-  async invalidateToken(token: string, ttlInSeconds: number): Promise<void> {
-    PrismaTokenRepository.blacklist.add(token);
-
-    // Remove automaticamente da memória após o TTL (tempo restante de vida do JWT)
-    setTimeout(() => {
-      PrismaTokenRepository.blacklist.delete(token);
-    }, ttlInSeconds * 1000);
-  }
-
-  async isTokenInvalidated(token: string): Promise<boolean> {
-    return PrismaTokenRepository.blacklist.has(token);
-  }
-}
+// Limitador estrito para rotas sensíveis (Login / Autenticação)
+export const authRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // Janela de 5 minutos
+  max: 5, // Apenas 5 tentativas consecutivas antes de bloquear
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 'error',
+    message: 'Muitas tentativas de autenticação. Tente novamente em 5 minutos.',
+  },
+});
 
 ```
 
-3. Use Cases da Aplicação
-
-A. Use Case: Contexto do Usuário Logado (src/application/useCases/get-current-user.use-case.ts)
+2. Configuração de CORS Restritivo (src/infrastructure/http/config/cors-options.ts)
 
 ```ts
 
-// src/application/useCases/get-current-user.use-case.ts
-import { IUserRepository } from '@domain/repositories/user.repository';
-import { GetUserResponseDTO } from './get-user-by-id.use-case';
-import { NotFoundError } from '@domain/errors/notFound.error';
+// src/infrastructure/http/config/cors-options.ts
+import { CorsOptions } from 'cors';
+import { env } from '@infrastructure/config/env';
 
-export class GetCurrentUserUseCase {
-  constructor(private readonly userRepository: IUserRepository) {}
+const allowedOrigins = [
+  env.FRONTEND_URL, // Origem autorizada (ex: http://localhost:3000)
+];
 
-  async execute(userId: string): Promise<GetUserResponseDTO> {
-    const user = await this.userRepository.findById(userId);
-
-    if (!user) {
-      throw new NotFoundError('Usuário');
+export const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    // Permite chamadas sem origin (Swagger local, mobile, curl) ou presentes na whitelist
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
-
-    return {
-      id: user.id!,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    };
-  }
-}
-
-```
-
-B. Use Case: Renovação de Token com Rotação (src/application/useCases/refresh-token.use-case.ts)
-
-```ts
-
-// src/application/useCases/refresh-token.use-case.ts
-import { TokenRepository } from '@domain/repositories/token-repository';
-import { IUserRepository } from '@domain/repositories/user.repository';
-import { UnauthorizedError } from '@domain/errors/unauthorized-error';
-import { sign } from 'jsonwebtoken';
-import { randomUUID } from 'crypto';
-
-interface RefreshTokenDTO {
-  refreshToken: string;
-}
-
-interface RefreshTokenResponse {
-  token: string;
-  refreshToken: string;
-}
-
-export class RefreshTokenUseCase {
-  constructor(
-    private readonly tokenRepository: TokenRepository,
-    private readonly userRepository: IUserRepository
-  ) {}
-
-  async execute({ refreshToken }: RefreshTokenDTO): Promise<RefreshTokenResponse> {
-    // 1. Busca o Refresh Token no banco
-    const storedToken = await this.tokenRepository.findRefreshToken(refreshToken);
-
-    if (!storedToken) {
-      throw new UnauthorizedError('Refresh Token inválido');
-    }
-
-    // 2. Valida se expirou
-    if (new Date() > storedToken.expiresIn) {
-      await this.tokenRepository.deleteRefreshTokenByUserId(storedToken.userId);
-      throw new UnauthorizedError('Refresh Token expirado. Faça login novamente.');
-    }
-
-    // 3. Busca o usuário associado
-    const user = await this.userRepository.findById(storedToken.userId);
-    if (!user) {
-      throw new UnauthorizedError('Usuário não encontrado');
-    }
-
-    // 4. Gera novo Access Token JWT curto (15 min)
-    const jwtSecret = process.env.JWT_SECRET || 'default_secret';
-    const newToken = sign({ role: user.role }, jwtSecret, {
-      subject: user.id,
-      expiresIn: '15m',
-    });
-
-    // 5. Rotação de Refresh Token (Emite um novo e queima o anterior)
-    const newRefreshTokenString = randomUUID();
-    const expiresInDays = 7;
-    const expiresDate = new Date();
-    expiresDate.setDate(expiresDate.getDate() + expiresInDays);
-
-    await this.tokenRepository.createRefreshToken(user.id!, newRefreshTokenString, expiresDate);
-
-    return {
-      token: newToken,
-      refreshToken: newRefreshTokenString,
-    };
-  }
-}
-
-```
-
-4. Controllers HTTP
-
-```ts
-
-// src/infrastructure/http/controllers/auth-advanced.controller.ts
-import { Request, Response, NextFunction } from 'express';
-import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
-import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
-import { TokenRepository } from '@domain/repositories/token-repository';
-
-export class AuthAdvancedController {
-  constructor(
-    private readonly getCurrentUserUseCase: GetCurrentUserUseCase,
-    private readonly refreshTokenUseCase: RefreshTokenUseCase,
-    private readonly tokenRepository: TokenRepository
-  ) {}
-
-  // GET /auth/me
-  async me(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
-    try {
-      const userId = req.user!.id;
-      const user = await this.getCurrentUserUseCase.execute(userId);
-      return res.status(200).json({ data: user });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // POST /auth/refresh-token
-  async refreshToken(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
-    try {
-      const { refreshToken } = req.body;
-      const result = await this.refreshTokenUseCase.execute({ refreshToken });
-      return res.status(200).json({ data: result });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // POST /auth/logout
-  async logout(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
-    try {
-      const authHeader = req.headers.authorization;
-      if (authHeader) {
-        const [, token] = authHeader.split(' ');
-        // Adiciona na Blacklist por 15 minutos (900s)
-        await this.tokenRepository.invalidateToken(token, 900);
-      }
-
-      return res.status(200).json({ message: 'Sessão encerrada com sucesso!' });
-    } catch (error) {
-      next(error);
-    }
-  }
-}
-
-```
-
-5. Atualização do Middleware ensureAuthenticated com Blacklist
-
-```ts
-
-// src/infrastructure/http/middlewares/ensure-authenticated.ts
-import { Request, Response, NextFunction } from 'express';
-import { verify } from 'jsonwebtoken';
-import { UnauthorizedError } from '@domain/errors/unauthorized-error';
-import { PrismaTokenRepository } from '@infrastructure/database/prisma/repositories/prisma-token.repository';
-
-const tokenRepository = new PrismaTokenRepository();
-
-export const ensureAuthenticated = async (
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): Promise<void> => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader) {
-    throw new UnauthorizedError('Token JWT não fornecido');
-  }
-
-  const [, token] = authHeader.split(' ');
-
-  // 1. Checagem de Revogação (Blacklist)
-  const isInvalidated = await tokenRepository.isTokenInvalidated(token);
-  if (isInvalidated) {
-    throw new UnauthorizedError('Sessão encerrada. Faça login novamente.');
-  }
-
-  // 2. Validação da Assinatura Criptográfica e Expiração
-  try {
-    const jwtSecret = process.env.JWT_SECRET || 'default_secret';
-    const decoded = verify(token, jwtSecret) as { sub: string; role: string };
-
-    req.user = {
-      id: decoded.sub,
-      role: decoded.role,
-    };
-
-    return next();
-  } catch {
-    throw new UnauthorizedError('Token JWT inválido ou expirado');
-  }
+    return callback(new Error('Origem não permitida pela política de CORS.'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 };
 
 ```
 
-6. Rotas com Swagger Autogen (src/infrastructure/http/routes/auth-routes.ts)
+3. Configuração dos Headers de Segurança HTTP com Helmet (src/infrastructure/http/config/helmet-options.ts)
+
+O Helmet por padrão já remove o header identificador X-Powered-By e ativa cabeçalhos como nosniff e HSTS. Contudo, em APIs que servem documentação interativa (como o Swagger UI), a diretiva padrão de Content Security Policy (CSP) bloqueia os scripts e estilos embutidos da interface gráfica.
+
+Configuramos uma política sob medida com suporte ao Swagger e proteção contra clickjacking e MIME-sniffing:
 
 ```ts
 
-// src/infrastructure/http/routes/auth-routes.ts
-import { Router } from 'express';
-import { ensureAuthenticated } from '../middlewares/ensure-authenticated';
-import { makeAuthAdvancedController } from '@main/factories/make-auth-advanced-controller';
+// src/infrastructure/http/config/helmet-options.ts
+import { HelmetOptions } from 'helmet';
 
-const authRoutes = Router();
-const controller = makeAuthAdvancedController();
+export const helmetOptions: HelmetOptions = {
+  // Oculta a tecnologia do servidor para evitar reconhecimento de exploits do Express
+  hidePoweredBy: true,
 
-// GET /auth/me
-authRoutes.get('/me', ensureAuthenticated, (req, res, next) => {
-  /*
-    #swagger.tags = ['Autenticação']
-    #swagger.summary = 'Retorna o perfil do usuário logado'
-    #swagger.security = [{ "bearerAuth": [] }]
-    #swagger.responses[200] = { description: 'Perfil recuperado com sucesso' }
-    #swagger.responses[401] = { description: 'Não autenticado' }
-  */
-  return controller.me(req, res, next);
-});
+  // Força HTTPS por 1 ano (incluindo subdomínios e lista de preload do navegador)
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  },
 
-// POST /auth/refresh-token
-authRoutes.post('/refresh-token', (req, res, next) => {
-  /*
-    #swagger.tags = ['Autenticação']
-    #swagger.summary = 'Renova o Access Token JWT utilizando o Refresh Token'
-    #swagger.parameters['body'] = {
-      in: 'body',
-      required: true,
-      schema: { refreshToken: 'uuid-do-refresh-token' }
-    }
-    #swagger.responses[200] = { description: 'Tokens renovados com sucesso' }
-    #swagger.responses[401] = { description: 'Refresh token inválido ou expirado' }
-  */
-  return controller.refreshToken(req, res, next);
-});
+  // Impede que a API seja incorporada em <iframe> de sites externos (anti-Clickjacking)
+  frameguard: {
+    action: 'deny',
+  },
 
-// POST /auth/logout
-authRoutes.post('/logout', ensureAuthenticated, (req, res, next) => {
-  /*
-    #swagger.tags = ['Autenticação']
-    #swagger.summary = 'Encerra a sessão e revoga o Access Token atual'
-    #swagger.security = [{ "bearerAuth": [] }]
-    #swagger.responses[200] = { description: 'Sessão encerrada com sucesso' }
-  */
-  return controller.logout(req, res, next);
-});
+  // Força o navegador a respeitar o Content-Type (bloqueia sniffing de MIME types)
+  noSniff: true,
 
-export { authRoutes };
+  // Content Security Policy flexibilizado exclusivamente para permitir o Swagger UI inline
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // Permite scripts de visualização do Swagger
+      styleSrc: ["'self'", "'unsafe-inline'"],  // Permite estilos CSS do Swagger
+      imgSrc: ["'self'", 'data:', 'https:'],
+    },
+  },
+};
 
 ```
 
-7. Factory makeAuthAdvancedController src/main/factories/make-auth-advanced-controller.ts
+4. Sanitização e Assepsia de Entrada (src/infrastructure/http/middlewares/sanitize-request.ts)
+
+A sanitização atua desarmando payloads maliciosos em req.body, req.params e req.query antes que cheguem aos validadores de schema (Zod) e aos controllers.
+
+Criamos um middleware unificado que combina:
+
+Defesa contra NoSQL/Object Injection (express-mongo-sanitize): Remove operadores proibidos como chaves iniciadas por $ ou com `.`.
+
+Defesa contra XSS (Cross-Site Scripting): Faz a assepsia recursiva de strings contra injeção de tags HTML (`<script>`, `<iframe>`) e manipuladores de eventos (onload=, onerror=).
 
 ```ts
 
-// src/main/factories/make-auth-advanced-controller.ts
-import { PrismaUserRepository } from '@infrastructure/database/prisma/repositories/prisma-user.repository';
-import { PrismaTokenRepository } from '@infrastructure/database/prisma/repositories/prisma-token.repository';
-import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
-import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
-import { AuthAdvancedController } from '@infrastructure/http/controllers/auth-advanced.controller';
+// src/infrastructure/http/middlewares/sanitize-request.ts
+import { Request, Response, NextFunction } from 'express';
+import mongoSanitize from 'express-mongo-sanitize';
 
-export const makeAuthAdvancedController = (): AuthAdvancedController => {
-  // 1. Instanciação dos Repositórios da camada de Infraestrutura
-  const userRepository = new PrismaUserRepository();
-  const tokenRepository = new PrismaTokenRepository();
+/**
+ * Remove tags HTML e atributos inline maliciosos de strings.
+ */
+function sanitizeString(value: string): string {
+  return value
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Remove blocos <script>
+    .replace(/<[^>]+>/g, '') // Remove tags HTML remanescentes
+    .replace(/javascript:/gi, '') // Remove esquemas de pseudo-protocolo
+    .replace(/on\w+\s*=/gi, ''); // Remove eventos inline como onload=, onerror=
+}
 
-  // 2. Instanciação dos Use Cases injetando as dependências de repositório (DIP)
-  const getCurrentUserUseCase = new GetCurrentUserUseCase(userRepository);
-  const refreshTokenUseCase = new RefreshTokenUseCase(tokenRepository, userRepository);
+/**
+ * Percorre recursivamente o objeto/array aplicando a assepsia de strings.
+ */
+function deepSanitize(target: unknown): unknown {
+  if (typeof target === 'string') {
+    return sanitizeString(target);
+  }
 
-  // 3. Instanciação do Controller agregando os Use Cases e o Repositório para Logout/Blacklist
-  return new AuthAdvancedController(
-    getCurrentUserUseCase,
-    refreshTokenUseCase,
-    tokenRepository
-  );
+  if (Array.isArray(target)) {
+    return target.map(deepSanitize);
+  }
+
+  if (target !== null && typeof target === 'object') {
+    const sanitizedObj: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(target)) {
+      sanitizedObj[key] = deepSanitize(value);
+    }
+    return sanitizedObj;
+  }
+
+  return target;
+}
+
+// 1. Instância do sanitizador NoSQL
+const noSqlSanitizer = mongoSanitize({
+  replaceWith: '_', // Substitui operadores suspeitos por '_' em vez de quebrar a requisição
+});
+
+/**
+ * Middleware composto de sanitização profunda (NoSQL + XSS)
+ */
+export const sanitizeRequest = (req: Request, res: Response, next: NextFunction): void => {
+  // Executa primeiro a remoção de operadores reservados de injeção NoSQL/Mongo
+  noSqlSanitizer(req, res, () => {
+    // Em seguida, aplica a assepsia de tags HTML/XSS nas entradas textuais
+    if (req.body && typeof req.body === 'object') {
+      req.body = deepSanitize(req.body);
+    }
+
+    if (req.query && typeof req.query === 'object') {
+      req.query = deepSanitize(req.query) as typeof req.query;
+    }
+
+    if (req.params && typeof req.params === 'object') {
+      req.params = deepSanitize(req.params) as typeof req.params;
+    }
+
+    next();
+  });
 };
+
+```
+
+Como plugar ambos no src/main/app.ts
+
+```ts
+
+// src/main/app.ts
+import 'express-async-errors';
+import express, { Express } from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import swaggerUi from 'swagger-ui-express';
+
+// 1. Configurações dos 4 pilares de segurança de borda
+import { helmetOptions } from '@infrastructure/http/config/helmet-options';
+import { corsOptions } from '@infrastructure/http/config/cors-options';
+import { apiRateLimiter, authRateLimiter } from '@infrastructure/http/middlewares/rate-limiter';
+import { sanitizeRequest } from '@infrastructure/http/middlewares/sanitize-request';
+
+// Rotas, documentação e tratamento de erros
+import { routes } from '@infrastructure/http/routes';
+import { errorHandler } from '@infrastructure/http/middlewares/error-handler';
+import swaggerFile from '../infrastructure/http/docs/swagger-output.json';
+
+const app: Express = express();
+
+/* -------------------------------------------------------------------------- */
+/* [PONTO 1] HEADERS DEFENSIVOS COM HELMET                                    */
+/* -------------------------------------------------------------------------- */
+// Aplica HSTS, No-Sniff, Frameguard (anti-clickjacking) e libera assets do Swagger
+app.use(helmet(helmetOptions));
+
+/* -------------------------------------------------------------------------- */
+/* [PONTO 2] ISOLAMENTO DE ORIGEM (CORS RESTRICTIVO)                         */
+/* -------------------------------------------------------------------------- */
+// Limita o consumo do navegador à whitelist permitida (FRONTEND_URL)
+app.use(cors(corsOptions));
+
+/* -------------------------------------------------------------------------- */
+/* [PONTO 3] RATE LIMITING GLOBAL (ANTI-DOS)                                  */
+/* -------------------------------------------------------------------------- */
+// Limita requisições por IP na borda antes de alocar memória com parse de body
+app.use('/api', apiRateLimiter);
+
+/* -------------------------------------------------------------------------- */
+/* BODY PARSERS COM LIMITE DE CARGA                                           */
+/* -------------------------------------------------------------------------- */
+// Evita exaustão de buffer com payloads gigantescos
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+/* -------------------------------------------------------------------------- */
+/* [PONTO 4] SANITIZAÇÃO DE ENTRADA (ANTI-XSS & ANTI-NOSQL INJECTION)         */
+/* -------------------------------------------------------------------------- */
+// Remove operadores de injeção ($ e .) e higieniza tags HTML em body, query e params
+app.use(sanitizeRequest);
+
+/* -------------------------------------------------------------------------- */
+/* DOCUMENTAÇÃO DA API (SWAGGER UI)                                           */
+/* -------------------------------------------------------------------------- */
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerFile));
+
+/* -------------------------------------------------------------------------- */
+/* [PONTO 3.B] RATE LIMITING ESTRITO PARA ENDPOINTS SENSÍVEIS (ANTI-BRUTE)    */
+/* -------------------------------------------------------------------------- */
+// Limita tentativas consecutivas de autenticação a no máximo 5 requisições por janela
+app.use('/api/v1/auth/sessions', authRateLimiter);
+app.use('/api/v1/auth/refresh-token', authRateLimiter);
+
+/* -------------------------------------------------------------------------- */
+/* ROTEAMENTO PRINCIPAL                                                       */
+/* -------------------------------------------------------------------------- */
+app.use('/api/v1', routes);
+
+/* -------------------------------------------------------------------------- */
+/* TRATAMENTO GLOBAL DE EXCEÇÕES                                              */
+/* -------------------------------------------------------------------------- */
+app.use(errorHandler);
+
+export { app };
+
+```
+
+Por que esta ordem é fundamental?
+
+- helmet() no topo: Garante que até respostas rejeitadas nas camadas seguintes (como um 403 do CORS ou um 429 de Rate Limit) já saiam do servidor com os headers de segurança corretos e sem o cabeçalho X-Powered-By: Express.
+
+- apiRateLimiter antes do express.json(): Se um atacante enviar milhares de requisições de 10 megabytes para derrubar o servidor, o rate limiter rejeitará a chamada no nível do IP com status 429 Too Many Requests antes que o Node.js gaste memória convertendo strings para objetos JSON.
+
+- express.json({ limit: '10kb' }) com cota explícita: Evita ataques de exaustão de buffer por payloads intencionalmente gigantescos.
+
+- mongoSanitize() logo após os parsers: A assepsia precisa ser aplicada assim que o req.body existir, para que qualquer middleware subsequente (como o validador Zod ou os Controllers) já receba dados desarmados.
+
+- errorHandler no final absoluto: Qualquer erro lançado em middlewares anteriores ou dentro dos Controllers é capturado aqui, evitando vazamento de stack traces do servidor para o cliente final.
+
+## Gestão de Segredos & Validação de Ambiente com Zod
+
+Configurações e segredos de infraestrutura (chaves JWT, credenciais de banco, URLs de serviços terceiros) não devem ser embutidos no código-fonte. O princípio III do [The Twelve-Factor App](https://12factor.net/pt_br/) determina a separação rígida entre código e configuração.
+
+```txt
+
+ ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+ │   .env.example  │       │      .env       │       │    env.ts       │
+ │   (Contrato)    │ ────► │ (Valores Reais) │ ────► │  (Parse Zod)    │
+ │ (Versionado Git)│       │ (Git Ignored)   │       │ (Fail-Fast Boot)│
+ └─────────────────┘       └─────────────────┘       └────────┬────────┘
+                                                              │
+                                      ┌───────────────────────┴───────────────────────┐
+                                      │                                               │
+                                      ▼                                               ▼
+                                 [ Sucesso ]                                     [ Falha ]
+                            Tipagem Segura (Autocomplete)              process.exit(1) com Relatório
+
+```
+
+### 1. O Risco de Falhas Silenciosas em Tempo de Execução (Runtime)
+
+O Node.js expõe variáveis de ambiente através de process.env. No entanto, process.env apresenta três fragilidades graves:
+
+1. Tipagem Fraca: Todas as variáveis em process.env são tratadas como string | undefined.
+
+2. Falhas Tardiás (Late-Fails): Se a variável JWT_SECRET for esquecida no arquivo .env, o servidor sobe normalmente sem erros. A falha só ocorrerá horas depois, no primeiro login de um usuário, disparando um erro 500 em produção.
+
+3. Conversões Manuais Inconsistentes: Variáveis como PORT=3333 chegam como texto ("3333"), exigindo conversões manuais espalhadas pelo código com risco de valores NaN.
+
+### 2. O Princípio do Fail-Fast no Boot
+
+O padrão Fail-Fast estabelece que, se o ambiente não possui as pré-condições necessárias para operar de forma segura e íntegra, o processo deve ser abortado imediatamente durante a inicialização, antes mesmo de abrir a porta HTTP ou escutar conexões.
+
+Ao utilizar o Zod para validar o process.env:
+
+- Validação Estrutural: O Zod verifica obrigatoriedade, tamanho mínimo (ex: JWT_SECRET com no mínimo 32 caracteres para impedir chaves fracas), URLs válidas e enums de ambiente (NODE_ENV).
+
+- Coerção Segura: Tipos numéricos como PORT são convertidos de forma determinística via z.coerce.number().
+
+- Imutabilidade e Previsibilidade: O objeto exportado env é congelado, validado e completamente tipado, eliminando acessos diretos e desprotegidos ao process.env no restante da aplicação.
+
+### 3. Anatomia do .env.example
+
+.env.example funciona como uma especificação contratual de infraestrutura. Ele:
+
+- É obrigatoriamente versionado no repositório Git.
+
+- Não contém senhas, chaves privadas ou credenciais reais de produção.
+
+- Documenta todas as variáveis necessárias para que novos desenvolvedores e esteiras de CI/CD saibam exatamente quais parâmetros precisam ser fornecidos para instanciar a API.
+
+Arquivo versionado no Git com todos os nomes de variáveis necessários (sem valores confidenciais):
+
+```txt
+
+# Configurações do Servidor
+NODE_ENV=development
+PORT=3333
+
+# Banco de Dados
+DATABASE_URL="postgresql://user:password@localhost:5432/manager_db?schema=public"
+
+# Segurança e JWT
+JWT_SECRET="chave_secreta_longa_com_no_minimo_32_caracteres_aleatorios"
+JWT_EXPIRES_IN="15m"
+
+# Integrações & Gateways
+VIA_CEP_BASE_URL="https://viacep.com.br/ws"
+FRONTEND_URL="http://localhost:3000"
+
+```
+
+### B. Validador de Schema com Zod (src/infrastructure/config/env.ts)
+
+```ts
+
+// src/infrastructure/config/env.ts
+import 'dotenv/config';
+import { z } from 'zod';
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().default(3333),
+  DATABASE_URL: z.string().url('DATABASE_URL deve ser uma URL válida de conexão'),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET deve ter no mínimo 32 caracteres para segurança adequada'),
+  JWT_EXPIRES_IN: z.string().default('15m'),
+  VIA_CEP_BASE_URL: z.string().url().default('https://viacep.com.br/ws'),
+  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+});
+
+// Faz o parsing das variáveis do process.env
+const _env = envSchema.safeParse(process.env);
+
+if (!_env.success) {
+  console.error('❌ Variáveis de ambiente inválidas ou ausentes:');
+  console.error(JSON.stringify(_env.error.format(), null, 2));
+
+  // Encerra imediatamente o processo caso a configuração falhe (Fail-Fast)
+  process.exit(1);
+}
+
+export const env = _env.data;
 
 ```
