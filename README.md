@@ -1,540 +1,406 @@
-# Renovação com Refresh Tokens, Revogação e Rota
+# Introdução à Pirâmide de Testes & Configuração do Jest no TypeScript
 
-Em sistemas corporativos, emitir um token JWT no momento do login é apenas o primeiro passo de uma estratégia de segurança. O verdadeiro desafio de engenharia começa depois do login: como manter a sessão segura ao longo do tempo sem degradar a experiência do usuário (UX) e sem violar os princípios da Clean Architecture?
+## 1. Por que Testamos Software? A Perspectiva de Negócio e Engenharia
 
-## O Dilema da Expiração: Segurança vs. Usabilidade
+Muitos desenvolvedores encaram testes como burocracia ou sobrecarga de trabalho (overhead). Na engenharia de software profissional, entretanto, código sem testes automatizados é um passivo financeiro imediato.
 
-Projetar o tempo de vida (Time-to-Live - TTL) de um token é um jogo de balanço entre dois riscos opostos:
+### A. A Lei da Curva de Custo da Mudança (Cost of Change Curve)
+
+Conforme formulado por Barry Boehm e demonstrado na indústria ao longo das décadas, o custo de corrigir uma falha cresce exponencialmente à medida que ela avança no ciclo de vida do desenvolvimento:
 
 ```txt
 
-🔴 Access Token com Vida Longa (ex: 30 dias)
- ├─ Vantagem: O usuário raramente precisa digitar a senha (ótima UX).
- └─ Perigo: Se o token for roubado (via script malicioso XSS ou intercepção), o atacante
-    terá 30 dias de acesso irrestrito. Você não consegue derrubar a sessão do invasor.
-
- 🔴 Access Token com Vida Curta (ex: 15 minutos)
- ├─ Vantagem: Se interceptado, a janela de ataque fecha rapidamente.
- └─ Perigo: A cada 15 minutos o usuário é deslogado abruptamente e precisa refazer o login (pessíma UX).
+  CUSTO ($)
+    ▲
+    │                                                    [ Produção: Incidente crítico,
+    │                                                      vazamento de dados, SLA rompido ]
+    │                                                                   ▲
+    │                                                                  ╱
+    │                                              [ Homologação / QA]╱
+    │                                                     ▲          ╱
+    │                                                    ╱          ╱
+    │                              [ Pull Request / CI ]╱          ╱
+    │                                      ▲           ╱          ╱
+    │              [ Feedback Imediato ]  ╱           ╱          ╱
+    │               (Teste Unitário: ms) ╱           ╱          ╱
+    └───────────────────────┴───────────┴───────────┴──────────┴────────────────► TEMPO
+                       Desenvolvimento     Build       Deploy     Operação
 
 ```
 
-### A Solução Industrial: A Estratégia de Tokens Duplos
+- No Teste Unitário (Feedback em milissegundos): Custo próximo de zero. O desenvolvedor percebe a regressão antes mesmo de commitar.
 
-Para resolver esse dilema, a indústria adota o padrão de Tokens Duplos, onde cada token desempenha um papel cirúrgico na arquitetura:
+- Em Produção: Custo altíssimo. Envolve horas de equipe sênior em incidentes, reuniões de post-mortem, perda de confiança do cliente, rollback de banco de dados e potencial dano financeiro direto.
 
-```txt
+### B. O Maior Benefício: O Fim do "Medo de Refatorar"
 
- ┌───────────────────────────────────────────────────────────────────────────┐
- │                      COMPARAÇÃO DE PAPÉIS DOS TOKENS                      │
- ├───────────────────┬────────────────────────────┬──────────────────────────┤
- │ Característica    │ Access Token               │ Refresh Token            │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Finalidade        │ Autorizar requisições HTTP │ Emitir novos Access      │
- │                   │ a recursos protegidos      │ Tokens sem pedir senha   │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Tempo de Vida     │ Muito curto (15 min)       │ Longo (7 a 30 dias)      │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Formato           │ JWT (Stateless, assinado)  │ Opaque Token / UUID v4   │
- │                   │                            │ (Stateful, persistido)   │
- ├───────────────────┼────────────────────────────┼──────────────────────────┤
- │ Armazenamento     │ Memória RAM do App/State   │ HttpOnly + Secure Cookie │
- │ no Cliente        │ (Inacessível por JS/XSS)   │ (Protegido contra XSS)   │
- └───────────────────┴────────────────────────────┴──────────────────────────┘
+Sem testes, qualquer melhoria arquitetural (ex: trocar um ORM, atualizar a versão do Node ou reorganizar pastas) é evitada por medo de quebrar comportamentos secundários (efeito colateral oculto).
 
- ```
+> Princípio Central: Os testes automatizados atuam como uma rede de segurança de alta precisão. Eles liberam o time para limpar o código continuamente, pagar dívidas técnicas e aplicar princípios de Clean Code sem paralisar as entregas de negócio.
 
-## 2. A Mecânica da Renovação Silenciosa (Silent Refresh)
+### C. Testes como Design Tool (Como a Clean Architecture Facilita o Teste)
 
-Para o usuário final, a renovação deve ser completamente invisível. O sistema opera em um ciclo autônomo entre o Frontend (interceptores HTTP como Axios ou Fetch) e o Backend:
+Existe uma correlação direta entre facilidade de teste e qualidade arquitetural:
+
+- Se uma classe é difícil de testar, ela provavelmente viola o SRP (Single Responsibility Principle) ou possui dependências ocultas acopladas (violação do DIP).
+
+- Na Clean Architecture, como a regra de dependência aponta sempre para dentro (Domínio no centro), Use Cases e Entidades não conhecem Express, Prisma ou Redis. Eles dependem apenas de contratos (IUserRepository, HashProvider).
+
+- Isso significa que podemos testar as regras mais críticas do negócio sem subir nenhum servidor HTTP, sem inicializar contêineres Docker e sem conexão de rede.
+
+## 2. Anatomia da Pirâmide de Testes
+
+A Pirâmide de Testes (popularizada por Mike Cohn e detalhada por Martin Fowler) orienta como distribuir os esforços de teste para balancear velocidade, custo e confiança.
 
 ```txt
 
-Navegador / App Client                          APIs & Auth Gateway
-    │                                                   │
-    ├───── 1. Executa requisição com Access Token ─────►│
-    │◄──── 2. HTTP 401 Unauthorized (Token Expirado) ──┤  (Falha esperada)
-    │                                                   │
-    ├───── 3. POST /auth/refresh-token ────────────────►│
-    │      (Envia o Refresh Token no Cookie HttpOnly)   │  (Valida no Banco/Cache)
-    │                                                   │
-    │◄──── 4. Retorna NOVO Access Token (200 OK) ───────┤
-    │                                                   │
-    └───── 5. Repete a requisição original #1 ─────────►│  (Sucesso transparente para o usuário!)
+                     ▲
+                    ╱ ╲
+                   ╱   ╲            1. TESTES E2E (Ponta a Ponta)
+                  ╱ E2E ╲           • Escopo: Borda HTTP até o Banco Real
+                 ╱───────╲          • Foco: Jornadas completas do usuário
+                ╱         ╲         • Características: Lentos (segundos/min), frágeis, caros
+               ╱Integração ╲
+              ╱─────────────╲       2. TESTES DE INTEGRAÇÃO
+             ╱               ╲      • Escopo: Comunicação entre camadas
+            ╱                 ╲     • Foco: Repositórios Prisma, Gateways de API, Middlewares
+           ╱    UNITÁRIOS      ╲    • Características: Velocidade média, validam integrações de I/O
+          ╱_____________________╲
+                                    3. TESTES UNITÁRIOS
+                                    • Escopo: Funções, Entidades, Use Cases
+                                    • Foco: Lógica de negócio pura e casos de borda
+                                    • Características: Ultrarrápidos (ms), isolados, determinísticos
 
 ```
 
-### O Conceito de Refresh Token Rotation (Rotacionamento)
+| Dimensão              | Testes Unitários              | Testes de Integração               | Testes Ponta a Ponta (E2E)  |
+|-----------------------|-------------------------------|------------------------------------|-----------------------------|
+| Alvo no Código        | domain/, application/         | infrastructure/ (Prisma, Gateways) | main/, routes/, HTTP Server |
+| Tempo de Execução     | 1 a 5 milissegundos por teste | 100ms a 1s por teste               | 2 a 10s por suíte           |
+| Dependência de Banco? | ❌ Não (usa memória)          | ✔️ Sim (Docker/SQLite/Test DB)     | ✔️ Sim (Ambiente completo)  |
+| Custo de Manutenção   | Muito baixo                   | Médio                              | Alto (sujeito a flakiness)  |
+| Volume Recomendado    | 70% a 80% da base             | 15% a 20% da base                  | 5% a 10% da base            |
 
-Por que apenas validar o Refresh Token não basta? Se um atacante roubar o Refresh Token, ele poderá renovar a sessão para sempre.
+## 3. O Vocabulário Essencial: Test Doubles (Gerard Meszaros)
 
-Para mitigar isso, aplicamos a Rotação de Refresh Tokens:
+Muitas vezes usa-se a palavra "Mock" como sinônimo para qualquer dublê de teste. Na literatura clássica (xUnit Test Patterns), existem categorias distintas:
 
-1. Toda vez que a rota POST /auth/refresh-token é chamada, o servidor invalida/queima o Refresh Token utilizado.
+1. Dummy: Objetos passados apenas para preencher parâmetros obrigatórios de um método, mas que nunca são efetivamente utilizados na lógica do teste (ex: um e-mail aleatório em um teste que só valida tamanho de array).
 
-2. Emite um novo par: um novo Access Token E um novo Refresh Token.
+2. Stub: Objeto que fornece respostas pré-programadas e prontas para as chamadas realizadas durante o teste (ex: um gateway que sempre devolve { valid: true } sem calcular nada).
 
-3. Se o mesmo Refresh Token for reutilizado uma segunda vez, o servidor detecta uma tentativa de roubo ou reuso indevido (Reuse Detection) e invalida todas as sessões e tokens daquele usuário imediatamente.
+3. Spy: Um dublê que registra informações sobre como foi chamado (quais argumentos recebeu, quantas vezes foi invocado). Usado quando queremos verificar se um evento ou método colateral foi disparado.
 
-## 3. A Teoria da Revogação: Como Quebrar a Natureza Stateless do JWT?
+4. Mock: Objeto configurado com expectativas prévias sobre as chamadas que deve receber. Se não for invocado conforme o esperado, o teste falha.
 
-O maior dilema teórico do JWT é que ele é autocontido (stateless). Uma vez emitido e assinado criptograficamente com a chave secreta, o servidor de aplicação não consulta o banco de dados para saber se o token é válido — ele apenas verifica a assinatura matemática e o tempo de expiração (exp).
+5. Fake: Possui uma implementação funcional real, porém simplificada e inadequada para produção por rodar em memória (ex: o InMemoryUserRepository e o FakeHashProvider). Este é o dublê padrão da Clean Architecture para isolar o Domínio.
 
-> "Se o JWT é validado apenas pela assinatura sem olhar o banco, o que acontece se o usuário clicar em 'Sair' (Logout), for demitido ou for banido pelo Administrador?"
+## 4. Configuração do Ecossistema Jest + TypeScript
 
-Sem um mecanismo de revogação, o token continuará válido na mão do cliente até que o tempo do exp expire!
-
-### Estratégia de Invalidação Ativa: A Blacklist Efêmera
-
-Para resolver esse problema sem perder a performance e a escalabilidade do JWT, criamos uma Blacklist (Lista de Tokens Revogados):
-
-```txt
-
- ┌─────────────────────────────────────────────────────────────────────────┐
- │                   MECANISMO DE BLACKLIST NO MIDDLEWARE                  │
- └─────────────────────────────────────────────────────────────────────────┘
-
-  Requisição HTTP ──► [ Middleware ensureAuthenticated ]
-                             │
-                             ├─ 1. Checa se o Token está na BLACKLIST (Memory/Redis)
-                             │     ├── SIM ──► HTTP 401 Unauthorized ("Sessão Encerrada")
-                             │     └── NÃO ──► Continua validação...
-                             │
-                             └─ 2. Valida Assinatura Criptográfica & Expiração JWT
-                                   └── OK ──► Anexa req.user e avança pro Controller
-
-```
-
-Por que usar Redis/In-Memory com TTL (Time-To-Live) na Blacklist?
-
-Não precisamos guardar o token na Blacklist para sempre. Se um Access Token expira em 15 minutos e o usuário clica em Logout no minuto 2:
-
-- Guardamos a hash do token na Blacklist com um tempo de vida (TTL) de apenas 13 minutos (o tempo restante até a expiração natural do JWT).
-
-- Após 13 minutos, a memória limpa a chave automaticamente, mantendo a Blacklist leve, ultra-rápida e eficiente!
-
-## 4. Como Tudo Isso se Encaixa na Clean Architecture?
-
-Para evitar que bibliotecas externas de cache (como Redis) ou do banco (Prisma) poluam as regras de negócio, aplicamos o Princípio da Inversão de Dependência (DIP) na camada de segurança:
+### A. Dependências de Desenvolvimento
 
 ```txt
 
-🟢 CAMADA DE DOMÍNIO (domain/)
-    ├── Entities/RefreshToken.ts ──────► (Entidade de negócio representando a renovação)
-    └── Repositories/TokenRepository.ts ─► (Interface/Contrato: invalidateToken e isTokenInvalidated)
-
- 🔵 CAMADA DE APLICAÇÃO (application/)
-    ├── UseCases/RefreshTokenUseCase.ts (Aplica a regra de rotacionamento)
-    └── UseCases/LogoutUseCase.ts ───── (Aciona o expurgo do token no repositório)
-
- 🔴 CAMADA DE INFRAESTRUTURA (infrastructure/)
-    ├── Database/RedisTokenRepository.ts (Implementação concreta e ultra-rápida em memória)
-    └── Middlewares/ensureAuthenticated.ts (Consome a interface TokenRepository via Injeção)
+npm install -D jest ts-jest @types/jest
 
 ```
 
-## Anatomia da Estratégia de Renovação
+### B. O Desafio dos Path Aliases no Jest (jest.config.ts)
 
-```txt
-
- ┌──────────────────────────────────────────────────────────────────────────────────┐
- │                               FLUXO DE REFRESH TOKEN                             │
- └──────────────────────────────────────────────────────────────────────────────────┘
-
-   Cliente (Frontend)                                   API (PokéManager)
-         │                                                      │
-         ├─────── 1. POST /auth/sessions (Email/Senha) ────────►│
-         │◄────── 2. Retorna AccessToken (15m) + RefreshToken ──┤
-         │                                                      │
-         │   ... 15 minutos se passam (AccessToken expira) ...  │
-         │                                                      │
-         ├─────── 3. GET /addresses/01001000 ──────────────────►│
-         │◄────── 4. HTTP 401 Unauthorized (Token Expirado) ────┤
-         │                                                      │
-         ├─────── 5. POST /auth/refresh-token (RefreshToken) ──►│
-         │◄────── 6. Valida no Banco/Cache e gera novo Par ─────┤
-
-```
-
-## Live Coding Hands-on
-
-1. Entidade e Interface do Repositório no Domínio
-
-A. Interface do Repositório de Tokens (src/domain/repositories/token-repository.ts)
+O TypeScript compila caminhos virtuais (@domain/*, @application/*) definidos no tsconfig.json. O Jest, no entanto, é executado pelo Node.js e não lê nativamente os aliases do TypeScript sem o devido mapeamento no moduleNameMapper.
 
 ```ts
 
-export interface RefreshTokenData {
-  id: string;
-  token: string;
-  userId: string;
-  expiresIn: Date;
-}
+// jest.config.ts
+import type { Config } from 'jest';
 
-export interface TokenRepository {
-  // Operações de Refresh Token
-  createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData>;
-  findRefreshToken(token: string): Promise<RefreshTokenData | null>;
-  deleteRefreshTokenByUserId(userId: string): Promise<void>;
+const config: Config = {
+  // 1. Motor de compilação TS sob demanda para os testes
+  preset: 'ts-jest',
+  testEnvironment: 'node',
 
-  // Operações de Blacklist (Invalidação de Access Tokens)
-  invalidateToken(token: string, ttlInSeconds: number): Promise<void>;
-  isTokenInvalidated(token: string): Promise<boolean>;
-}
+  // 2. Onde procurar arquivos de teste
+  roots: ['<rootDir>/src', '<rootDir>/tests'],
+  testMatch: [
+    '**/*.spec.ts', // Padrão unitário (especificação de comportamento)
+    '**/*.test.ts', // Padrão integração / E2E
+  ],
+
+  // 3. Limpeza automática de espiões e mocks antes de cada teste
+  clearMocks: true,
+
+  // 4. Mapeamento dos Path Aliases idêntico ao tsconfig.json
+  moduleNameMapper: {
+    '^@domain/(.*)$': '<rootDir>/src/domain/$1',
+    '^@application/(.*)$': '<rootDir>/src/application/$1',
+    '^@infrastructure/(.*)$': '<rootDir>/src/infrastructure/$1',
+    '^@main/(.*)$': '<rootDir>/src/main/$1',
+    '^@tests/(.*)$': '<rootDir>/tests/$1',
+  },
+
+  // 5. Cobertura de Código (Code Coverage)
+  collectCoverageFrom: [
+    'src/domain/**/*.ts',
+    'src/application/useCases/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/index.ts',
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text-summary', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
+    },
+  },
+};
+
+export default config;
 
 ```
 
-2. Implementação do Repositório na Infraestrutura (Prisma + Memória)
+### C. Mapa Completo de Scripts no package.json
 
-Atenção: Utilizamos um Set em memória como estratégia leve de Blacklist para o ambiente de dev/aula, extensível para Redis em produção.
+O ecossistema de scripts no package.json determina o fluxo de trabalho diário do desenvolvedor e a esteira de integração contínua (CI/CD).
 
-```ts
+Para uma API, organizamos os comandos em execução local rápida, segmentação por camada da pirâmide e auditoria de qualidade.
 
-// src/infrastructure/database/prisma/repositories/prisma-token.repository.ts
-import { TokenRepository, RefreshTokenData } from '@domain/repositories/token-repository';
-import { prisma } from '../prisma-client';
+```json
 
-export class PrismaTokenRepository implements TokenRepository {
-  // Armazenamento em memória efêmero para a Blacklist de Access Tokens
-  private static blacklist = new Set<string>();
-
-  async createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData> {
-    // Remove tokens antigos do mesmo usuário para manter apenas uma sessão ativa por simplicidade
-    await this.deleteRefreshTokenByUserId(userId);
-
-    const refreshToken = await prisma.refreshToken.create({
-      data: {
-        userId,
-        token,
-        expiresIn,
-      },
-    });
-
-    return refreshToken;
-  }
-
-  async findRefreshToken(token: string): Promise<RefreshTokenData | null> {
-    const refreshToken = await prisma.refreshToken.findUnique({
-      where: { token },
-    });
-
-    return refreshToken;
-  }
-
-  async deleteRefreshTokenByUserId(userId: string): Promise<void> {
-    await prisma.refreshToken.deleteMany({
-      where: { userId },
-    });
-  }
-
-  async invalidateToken(token: string, ttlInSeconds: number): Promise<void> {
-    PrismaTokenRepository.blacklist.add(token);
-
-    // Remove automaticamente da memória após o TTL (tempo restante de vida do JWT)
-    setTimeout(() => {
-      PrismaTokenRepository.blacklist.delete(token);
-    }, ttlInSeconds * 1000);
-  }
-
-  async isTokenInvalidated(token: string): Promise<boolean> {
-    return PrismaTokenRepository.blacklist.has(token);
+{
+  "scripts": {
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:integration": "dotenv -e .env.test -- jest --testPathPattern=tests/integration --runInBand",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --runInBand"
   }
 }
 
 ```
 
-3. Use Cases da Aplicação
+O que cada flag e script faz na prática:
 
-A. Use Case: Contexto do Usuário Logado (src/application/useCases/get-current-user.use-case.ts)
+- npm test (jest --runInBand): Executa todos os testes de forma sequencial em um único processo. Evita condições de corrida (race conditions) quando há acesso compartilhado ao banco de testes.
+
+- npm run test:watch (jest --watch): Modo interativo durante o desenvolvimento. O Jest monitora os arquivos salvos no Git e reexecuta apenas os testes afetados pelas modificações em tempo real.
+
+- npm run test:unit (--testPathPattern=tests/unit): Filtra e executa exclusivamente a base da pirâmide (testes de domínio e casos de uso em memória). Leva poucos milissegundos e não depende de Docker ou banco ativo.
+
+- npm run test:integration: Carrega as variáveis isoladas do .env.test (apontando para o banco de testes) e executa apenas as suítes HTTP/Prisma.
+
+- npm run test:coverage (jest --coverage): Instrumenta o código-fonte para rastrear cada linha e desvio lógico executado, gerando a tabela matricial no terminal e o relatório visual em HTML na pasta coverage/lcov-report/index.html.
+
+- npm run test:ci: Comando otimizado para pipelines (GitHub Actions / GitLab CI). Desativa modos interativos, força a coleta de cobertura e falha o build caso os thresholds mínimos (ex: 80%) não sejam atingidos.
+
+### D. Entendendo Métricas de Cobertura (Code Coverage)
+
+Ao executar npm run test:coverage, o Jest gera um relatório matricial semelhante a esta no terminal:
+
+```bash
+
+----------------------------------|---------|----------|---------|---------|-------------------
+File                              | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------------------|---------|----------|---------|---------|-------------------
+All files                         |   88.46 |    75.00 |   90.00 |   88.46 |
+ domain/entities                  |  100.00 |   100.00 |  100.00 |  100.00 |
+  user.ts                         |  100.00 |   100.00 |  100.00 |  100.00 |
+ application/useCases             |   84.21 |    66.66 |   85.71 |   84.21 |
+  create-user.use-case.ts         |  100.00 |   100.00 |  100.00 |  100.00 |
+  refresh-token.use-case.ts       |   72.72 |    50.00 |   75.00 |   72.72 | 28-34
+----------------------------------|---------|----------|---------|---------|-------------------
+
+```
+
+**Como interpretar cada coluna:**
+
+1. % Branch (A métrica mais importante): Se um if (new Date() > token.expiresIn) só foi testado com tokens válidos (caminho false), o % Branch daquele arquivo será 50%. É o principal indicador de que faltam testes para cenários de erro e exceção.
+
+2. Uncovered Line #s (ex: 28-34): Aponta exatamente quais linhas físicas do arquivo nunca foram atingidas por nenhum teste — ideal para identificar regras de negócio esquecidas ou código morto (dead code).
+
+3. Relatório HTML Interativo: Ao abrir coverage/lcov-report/index.html no navegador, o aluno consegue clicar em cada arquivo e ver visualmente:
+
+- Verde: Linha e ramificação cobertas.
+
+- Amarelo (I ou E): Apenas o bloco if ou apenas o bloco else foi executado.
+
+- Vermelho: Trecho de código nunca executado.
+
+**Observações:**
+
+- Statements (Declarações): Porcentagem de instruções de código executadas pelo menos uma vez durante a suíte.
+
+- Branches (Ramificações): Porcentagem de caminhos lógicos testados em estruturas condicionais (if/else, operadores ternários ? :, switch).
+
+- Functions (Funções): Porcentagem de métodos e funções chamadas.
+
+- Lines (Linhas): Porcentagem de linhas físicas de código executadas.
+
+**Cuidado com a Ilusão do 100% de Cobertura:**
+
+Cobertura mede quais linhas foram executadas, não se as asserções de negócio estão corretas. Um teste que executa uma função sem nenhum expect dá 100% de cobertura, mas 0% de confiança! O objetivo é cobrir comportamentos e regras de negócio, não linhas de código.
+
+### E. O Que Deve Ser Ignorado na Cobertura (collectCoverageFrom)
+
+Para não distorcer a métrica cobrindo arquivos declarativos ou puramente estruturais, configuramos exclusões cirúrgicas no jest.config.ts:
+
+Interfaces e Contratos (`*.repository.ts, *.d.ts`): Não possuem lógica executável em tempo de execução no JavaScript compilado.
+
+Arquivos de Exportação (index.ts): Apenas reexportam módulos.
+
+Factories de Injeção (src/main/factories/**): Apenas instanciam classes concretas (são cobertas indiretamente pelos testes de integração/E2E).
+
+## 5. Implementação Prática: Testando o Core Sem Banco de Dados
+
+### A. O Dublê de Teste: tests/mocks/in-memory-user-repository.ts
+
+Ao invés de conectar ao PostgreSQL e rodar migrações a cada teste unitário, usamos uma coleção em memória (Array) que implementa a interface de domínio IUserRepository:
 
 ```ts
 
-// src/application/useCases/get-current-user.use-case.ts
+// tests/mocks/in-memory-user-repository.ts
 import { IUserRepository } from '@domain/repositories/user.repository';
-import { GetUserResponseDTO } from './get-user-by-id.use-case';
-import { NotFoundError } from '@domain/errors/notFound.error';
-
-export class GetCurrentUserUseCase {
-  constructor(private readonly userRepository: IUserRepository) {}
-
-  async execute(userId: string): Promise<GetUserResponseDTO> {
-    const user = await this.userRepository.findById(userId);
-
-    if (!user) {
-      throw new NotFoundError('Usuário');
-    }
-
-    return {
-      id: user.id!,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    };
-  }
-}
-
-```
-
-B. Use Case: Renovação de Token com Rotação (src/application/useCases/refresh-token.use-case.ts)
-
-```ts
-
-// src/application/useCases/refresh-token.use-case.ts
-import { TokenRepository } from '@domain/repositories/token-repository';
-import { IUserRepository } from '@domain/repositories/user.repository';
-import { UnauthorizedError } from '@domain/errors/unauthorized-error';
-import { sign } from 'jsonwebtoken';
+import { User } from '@domain/entities/user';
 import { randomUUID } from 'crypto';
 
-interface RefreshTokenDTO {
-  refreshToken: string;
-}
+export class InMemoryUserRepository implements IUserRepository {
+  public items: User[] = [];
 
-interface RefreshTokenResponse {
-  token: string;
-  refreshToken: string;
-}
-
-export class RefreshTokenUseCase {
-  constructor(
-    private readonly tokenRepository: TokenRepository,
-    private readonly userRepository: IUserRepository
-  ) {}
-
-  async execute({ refreshToken }: RefreshTokenDTO): Promise<RefreshTokenResponse> {
-    // 1. Busca o Refresh Token no banco
-    const storedToken = await this.tokenRepository.findRefreshToken(refreshToken);
-
-    if (!storedToken) {
-      throw new UnauthorizedError('Refresh Token inválido');
-    }
-
-    // 2. Valida se expirou
-    if (new Date() > storedToken.expiresIn) {
-      await this.tokenRepository.deleteRefreshTokenByUserId(storedToken.userId);
-      throw new UnauthorizedError('Refresh Token expirado. Faça login novamente.');
-    }
-
-    // 3. Busca o usuário associado
-    const user = await this.userRepository.findById(storedToken.userId);
-    if (!user) {
-      throw new UnauthorizedError('Usuário não encontrado');
-    }
-
-    // 4. Gera novo Access Token JWT curto (15 min)
-    const jwtSecret = process.env.JWT_SECRET || 'default_secret';
-    const newToken = sign({ role: user.role }, jwtSecret, {
-      subject: user.id,
-      expiresIn: '15m',
+  async create(user: User): Promise<void> {
+    const userToSave = new User({
+      id: user.id || randomUUID(),
+      name: user.name,
+      email: user.email,
+      password: user.password,
+      role: user.role,
+      createdAt: user.createdAt || new Date(),
     });
 
-    // 5. Rotação de Refresh Token (Emite um novo e queima o anterior)
-    const newRefreshTokenString = randomUUID();
-    const expiresInDays = 7;
-    const expiresDate = new Date();
-    expiresDate.setDate(expiresDate.getDate() + expiresInDays);
+    this.items.push(userToSave);
+  }
 
-    await this.tokenRepository.createRefreshToken(user.id!, newRefreshTokenString, expiresDate);
+  async findByEmail(email: string): Promise<User | null> {
+    const user = this.items.find((item) => item.email === email);
+    return user || null;
+  }
 
-    return {
-      token: newToken,
-      refreshToken: newRefreshTokenString,
-    };
+  async findById(id: string): Promise<User | null> {
+    const user = this.items.find((item) => item.id === id);
+    return user || null;
+  }
+
+  async findAll(): Promise<User[]> {
+    return this.items;
   }
 }
 
 ```
 
-4. Controllers HTTP
+### B. O Dublê de Teste: tests/mocks/fake-hash-provider.ts
+
+Criptografar senhas com bcrypt (10 rounds de salt) consome centenas de milissegundos de processamento de CPU propositalmente. Em testes unitários, usamos um hash determinístico falso:
 
 ```ts
 
-// src/infrastructure/http/controllers/auth-advanced.controller.ts
-import { Request, Response, NextFunction } from 'express';
-import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
-import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
-import { TokenRepository } from '@domain/repositories/token-repository';
+// tests/mocks/fake-hash-provider.ts
+import { HashProvider } from '@domain/providers/hash-provider';
 
-export class AuthAdvancedController {
-  constructor(
-    private readonly getCurrentUserUseCase: GetCurrentUserUseCase,
-    private readonly refreshTokenUseCase: RefreshTokenUseCase,
-    private readonly tokenRepository: TokenRepository
-  ) {}
-
-  // GET /auth/me
-  async me(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
-    try {
-      const userId = req.user!.id;
-      const user = await this.getCurrentUserUseCase.execute(userId);
-      return res.status(200).json({ data: user });
-    } catch (error) {
-      next(error);
-    }
+export class FakeHashProvider implements HashProvider {
+  async generateHash(payload: string): Promise<string> {
+    return `hashed_${payload}`;
   }
 
-  // POST /auth/refresh-token
-  async refreshToken(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
-    try {
-      const { refreshToken } = req.body;
-      const result = await this.refreshTokenUseCase.execute({ refreshToken });
-      return res.status(200).json({ data: result });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // POST /auth/logout
-  async logout(req: Request, res: Response, next: NextFunction): Promise<Response | void> {
-    try {
-      const authHeader = req.headers.authorization;
-      if (authHeader) {
-        const [, token] = authHeader.split(' ');
-        // Adiciona na Blacklist por 15 minutos (900s)
-        await this.tokenRepository.invalidateToken(token, 900);
-      }
-
-      return res.status(200).json({ message: 'Sessão encerrada com sucesso!' });
-    } catch (error) {
-      next(error);
-    }
+  async compareHash(payload: string, hashed: string): Promise<boolean> {
+    return `hashed_${payload}` === hashed;
   }
 }
 
 ```
 
-5. Atualização do Middleware ensureAuthenticated com Blacklist
+### C. A Suíte de Testes Unitários: Padrão AAA (Arrange, Act, Assert)
+
+O padrão AAA organiza o teste de forma semântica e legível:
+
+1. Arrange (Arranjar): Prepara o cenário, instanciando os dublês e o objeto sob teste (SUT).
+
+2. Act(Agir): Executa a operação que está sendo validada.
+
+3. Assert(Afirmar): Checa se o resultado obtido corresponde exatamente à expectativa de negócio.
 
 ```ts
 
-// src/infrastructure/http/middlewares/ensure-authenticated.ts
-import { Request, Response, NextFunction } from 'express';
-import { verify } from 'jsonwebtoken';
-import { UnauthorizedError } from '@domain/errors/unauthorized-error';
-import { PrismaTokenRepository } from '@infrastructure/database/prisma/repositories/prisma-token.repository';
+// tests/unit/create-user.use-case.spec.ts
+import { CreateUserUseCase } from '@application/useCases/create-user.use-case';
+import { InMemoryUserRepository } from '../mocks/in-memory-user-repository';
+import { FakeHashProvider } from '../mocks/fake-hash-provider';
+import { ConflictError } from '@domain/errors/conflict.error';
 
-const tokenRepository = new PrismaTokenRepository();
+describe('CreateUserUseCase (Unit)', () => {
+  let userRepository: InMemoryUserRepository;
+  let hashProvider: FakeHashProvider;
+  let sut: CreateUserUseCase; // SUT = System Under Test
 
-export const ensureAuthenticated = async (
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): Promise<void> => {
-  const authHeader = req.headers.authorization;
+  beforeEach(() => {
+    // Isola cada teste em um ambiente limpo
+    userRepository = new InMemoryUserRepository();
+    hashProvider = new FakeHashProvider();
+    sut = new CreateUserUseCase(userRepository, hashProvider);
+  });
 
-  if (!authHeader) {
-    throw new UnauthorizedError('Token JWT não fornecido');
-  }
-
-  const [, token] = authHeader.split(' ');
-
-  // 1. Checagem de Revogação (Blacklist)
-  const isInvalidated = await tokenRepository.isTokenInvalidated(token);
-  if (isInvalidated) {
-    throw new UnauthorizedError('Sessão encerrada. Faça login novamente.');
-  }
-
-  // 2. Validação da Assinatura Criptográfica e Expiração
-  try {
-    const jwtSecret = process.env.JWT_SECRET || 'default_secret';
-    const decoded = verify(token, jwtSecret) as { sub: string; role: string };
-
-    req.user = {
-      id: decoded.sub,
-      role: decoded.role,
+  it('deve cadastrar um novo treinador com senha hasheada e papel USER por padrão', async () => {
+    // 1. Arrange
+    const input = {
+      name: 'Ash Ketchum',
+      email: 'ash@palettown.com',
+      password: 'pikachuMaster123',
     };
 
-    return next();
-  } catch {
-    throw new UnauthorizedError('Token JWT inválido ou expirado');
-  }
-};
+    // 2. Act
+    const user = await sut.execute(input);
+
+    // 3. Assert
+    expect(user).toHaveProperty('id');
+    expect(user.name).toBe(input.name);
+    expect(user.email).toBe(input.email);
+    expect(user.password).toBe('hashed_pikachuMaster123'); // Valida aplicação do hash
+    expect(user.role).toBe('USER'); // Garante papel de menor privilégio
+    expect(userRepository.items).toHaveLength(1);
+    expect(userRepository.items[0].email).toBe(input.email);
+  });
+
+  it('deve rejeitar o cadastro lançando ConflictError caso o e-mail já esteja em uso', async () => {
+    // 1. Arrange: pré-cadastra um usuário com o mesmo e-mail
+    await sut.execute({
+      name: 'Gary Oak',
+      email: 'gary@palettown.com',
+      password: 'blastoiseRocks123',
+    });
+
+    // 2. Act & 3. Assert: tenta recadastrar com o mesmo e-mail
+    await expect(
+      sut.execute({
+        name: 'Gary Clone',
+        email: 'gary@palettown.com',
+        password: 'outraSenha123',
+      })
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    // Garante que o usuário duplicado não foi inserido
+    expect(userRepository.items).toHaveLength(1);
+  });
+});
 
 ```
 
-6. Rotas com Swagger Autogen (src/infrastructure/http/routes/auth-routes.ts)
+**Outro padrão popular em testes unitários:**
 
-```ts
+O padrão Given-When-Then também é muito comum no desenvolvimento orientado a comportamento (BDD) e em testes de aceitação:
 
-// src/infrastructure/http/routes/auth-routes.ts
-import { Router } from 'express';
-import { ensureAuthenticated } from '../middlewares/ensure-authenticated';
-import { makeAuthAdvancedController } from '@main/factories/make-auth-advanced-controller';
+1. Given (Dado que): Equivalente ao Arrange (contexto inicial).
 
-const authRoutes = Router();
-const controller = makeAuthAdvancedController();
+2. When (Quando): Equivalente ao Act (ação realizada).
 
-// GET /auth/me
-authRoutes.get('/me', ensureAuthenticated, (req, res, next) => {
-  /*
-    #swagger.tags = ['Autenticação']
-    #swagger.summary = 'Retorna o perfil do usuário logado'
-    #swagger.security = [{ "bearerAuth": [] }]
-    #swagger.responses[200] = { description: 'Perfil recuperado com sucesso' }
-    #swagger.responses[401] = { description: 'Não autenticado' }
-  */
-  return controller.me(req, res, next);
-});
-
-// POST /auth/refresh-token
-authRoutes.post('/refresh-token', (req, res, next) => {
-  /*
-    #swagger.tags = ['Autenticação']
-    #swagger.summary = 'Renova o Access Token JWT utilizando o Refresh Token'
-    #swagger.parameters['body'] = {
-      in: 'body',
-      required: true,
-      schema: { refreshToken: 'uuid-do-refresh-token' }
-    }
-    #swagger.responses[200] = { description: 'Tokens renovados com sucesso' }
-    #swagger.responses[401] = { description: 'Refresh token inválido ou expirado' }
-  */
-  return controller.refreshToken(req, res, next);
-});
-
-// POST /auth/logout
-authRoutes.post('/logout', ensureAuthenticated, (req, res, next) => {
-  /*
-    #swagger.tags = ['Autenticação']
-    #swagger.summary = 'Encerra a sessão e revoga o Access Token atual'
-    #swagger.security = [{ "bearerAuth": [] }]
-    #swagger.responses[200] = { description: 'Sessão encerrada com sucesso' }
-  */
-  return controller.logout(req, res, next);
-});
-
-export { authRoutes };
-
-```
-
-7. Factory makeAuthAdvancedController src/main/factories/make-auth-advanced-controller.ts
-
-```ts
-
-// src/main/factories/make-auth-advanced-controller.ts
-import { PrismaUserRepository } from '@infrastructure/database/prisma/repositories/prisma-user.repository';
-import { PrismaTokenRepository } from '@infrastructure/database/prisma/repositories/prisma-token.repository';
-import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
-import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
-import { AuthAdvancedController } from '@infrastructure/http/controllers/auth-advanced.controller';
-
-export const makeAuthAdvancedController = (): AuthAdvancedController => {
-  // 1. Instanciação dos Repositórios da camada de Infraestrutura
-  const userRepository = new PrismaUserRepository();
-  const tokenRepository = new PrismaTokenRepository();
-
-  // 2. Instanciação dos Use Cases injetando as dependências de repositório (DIP)
-  const getCurrentUserUseCase = new GetCurrentUserUseCase(userRepository);
-  const refreshTokenUseCase = new RefreshTokenUseCase(tokenRepository, userRepository);
-
-  // 3. Instanciação do Controller agregando os Use Cases e o Repositório para Logout/Blacklist
-  return new AuthAdvancedController(
-    getCurrentUserUseCase,
-    refreshTokenUseCase,
-    tokenRepository
-  );
-};
-
-```
+3. Then (Então): Equivalente ao Assert (resultado esperado).
