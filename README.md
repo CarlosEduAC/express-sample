@@ -1,469 +1,406 @@
-# Segurança Defensiva de APIs & Gestão de Configurações
+# Introdução à Pirâmide de Testes & Configuração do Jest no TypeScript
 
-## Hardening de Borda
+## 1. Por que Testamos Software? A Perspectiva de Negócio e Engenharia
 
-O Hardening de Borda é o processo de fortificar os dispositivos que ficam no limite entre a sua rede interna e a internet pública (como roteadores de borda, firewalls e gateways). O principal objetivo é reduzir a superfície de ataque, eliminando serviços desnecessários e aplicando configurações estritas para evitar invasões, abusos ou indisponibilidade da rede.
+Muitos desenvolvedores encaram testes como burocracia ou sobrecarga de trabalho (overhead). Na engenharia de software profissional, entretanto, código sem testes automatizados é um passivo financeiro imediato.
 
-Na Clean Architecture, a camada de Borda (Edge Layer ou Camada de Entrada) é o primeiro ponto de contato entre a internet aberta e o núcleo do sistema. Hardening de Borda consiste em eliminar vetores de ataque comuns antes que a requisição gaste ciclos de CPU do domínio ou toque no banco de dados.
+### A. A Lei da Curva de Custo da Mudança (Cost of Change Curve)
 
-O OWASP API Security Top 10 é o projeto da OWASP Foundation que cataloga as vulnerabilidades e os riscos mais críticos de segurança em Interfaces de Programação de Aplicações (APIs).
+Conforme formulado por Barry Boehm e demonstrado na indústria ao longo das décadas, o custo de corrigir uma falha cresce exponencialmente à medida que ela avança no ciclo de vida do desenvolvimento:
 
 ```txt
 
-      REQUISIÇÃO EXTERNA (Hostil / Neutra / Amigável)
-                           │
-                           ▼
- ┌───────────────────────────────────────────────────┐
- │  1. Helmet (Headers)    -> Camuflagem & Transporte│
- │  2. CORS                -> Isolamento de Origem   │  BARREIRAS
- │  3. Rate Limiting       -> Controle de Frequência │  DE BORDA
- │  4. Input Sanitization  -> Assepsia de Payload    │
- └─────────────────────────┬─────────────────────────┘
-                           │  Requisição Legítima e Filtrada
-                           ▼
-                  Controller & Use Case
+  CUSTO ($)
+    ▲
+    │                                                    [ Produção: Incidente crítico,
+    │                                                      vazamento de dados, SLA rompido ]
+    │                                                                   ▲
+    │                                                                  ╱
+    │                                              [ Homologação / QA]╱
+    │                                                     ▲          ╱
+    │                                                    ╱          ╱
+    │                              [ Pull Request / CI ]╱          ╱
+    │                                      ▲           ╱          ╱
+    │              [ Feedback Imediato ]  ╱           ╱          ╱
+    │               (Teste Unitário: ms) ╱           ╱          ╱
+    └───────────────────────┴───────────┴───────────┴──────────┴────────────────► TEMPO
+                       Desenvolvimento     Build       Deploy     Operação
 
 ```
 
-### 1. Camuflagem e Transporte Seguro: Helmet
+- No Teste Unitário (Feedback em milissegundos): Custo próximo de zero. O desenvolvedor percebe a regressão antes mesmo de commitar.
 
-O Express, por padrão, expõe cabeçalhos informativos como X-Powered-By: Express. Para um atacante, isso informa a tecnologia exata, permitindo buscar vulnerabilidades específicas conhecidas (CVEs) para aquela versão.
+- Em Produção: Custo altíssimo. Envolve horas de equipe sênior em incidentes, reuniões de post-mortem, perda de confiança do cliente, rollback de banco de dados e potencial dano financeiro direto.
 
-O Helmet atua injetando um conjunto de cabeçalhos de resposta HTTP defensivos:
+### B. O Maior Benefício: O Fim do "Medo de Refatorar"
 
-- HSTS (Strict-Transport-Security): Força o navegador a se comunicar exclusivamente via HTTPS, impedindo ataques de interceptação Man-in-the-Middle (MitM) e downgrade de protocolo (SSL Stripping).
+Sem testes, qualquer melhoria arquitetural (ex: trocar um ORM, atualizar a versão do Node ou reorganizar pastas) é evitada por medo de quebrar comportamentos secundários (efeito colateral oculto).
 
-- X-Content-Type-Options: nosniff: Impede que navegadores tentem adivinhar (MIME sniffing) o tipo de arquivo de uma resposta. Se a API responde com JSON, o cliente é obrigado a tratá-lo como JSON, bloqueando a execução de scripts embutidos disfarçados de texto.
+> Princípio Central: Os testes automatizados atuam como uma rede de segurança de alta precisão. Eles liberam o time para limpar o código continuamente, pagar dívidas técnicas e aplicar princípios de Clean Code sem paralisar as entregas de negócio.
 
-- X-Frame-Options: SAMEORIGIN / DENY: Previne ataques de Clickjacking, proibindo que a sua aplicação ou documentação seja incorporada dentro de `<frame>`, `<iframe>` ou `<embed>` em sites de terceiros.
+### C. Testes como Design Tool (Como a Clean Architecture Facilita o Teste)
 
-Obs: O clickjacking (ou sequestro de cliques) é uma técnica de ataque cibernético na qual a vítima é induzida a clicar em um botão, link ou elemento oculto ou transparente sobreposto em uma página legítima.
+Existe uma correlação direta entre facilidade de teste e qualidade arquitetural:
 
-### 2. Controle de Acesso por Origem: CORS (Cross-Origin Resource Sharing)
+- Se uma classe é difícil de testar, ela provavelmente viola o SRP (Single Responsibility Principle) ou possui dependências ocultas acopladas (violação do DIP).
 
-CORS não é uma ferramenta para proteger a API de ferramentas de linha de comando como curl ou Postman (que não respeitam regras de navegador); CORS é uma instrução para o navegador do usuário.
+- Na Clean Architecture, como a regra de dependência aponta sempre para dentro (Domínio no centro), Use Cases e Entidades não conhecem Express, Prisma ou Redis. Eles dependem apenas de contratos (IUserRepository, HashProvider).
 
-- O Risco: Sem CORS restritivo (Access-Control-Allow-Origin: *), um site malicioso visitado pelo usuário pode emitir chamadas assíncronas via fetch contra a sua API utilizando a sessão/cookies legítimos do navegador.
+- Isso significa que podemos testar as regras mais críticas do negócio sem subir nenhum servidor HTTP, sem inicializar contêineres Docker e sem conexão de rede.
 
-- A Solução: Whitelist explícita de domínios confiáveis. Apenas as origens listadas no servidor recebem autorização do navegador para ler as respostas de requisições de origem cruzada.
+## 2. Anatomia da Pirâmide de Testes
 
-Obs: Podemos usar em conjunto ferramentas de Geolocalização ou CDNs para liberar o acesso para uma determinada região, por exemplo.
+A Pirâmide de Testes (popularizada por Mike Cohn e detalhada por Martin Fowler) orienta como distribuir os esforços de teste para balancear velocidade, custo e confiança.
 
-### 3. Mitigação de Força Bruta e DoS: Rate Limiting (OWASP API4:2023 - Unrestricted Resource Consumption)
+```txt
 
-APIs sem limitação de frequência tornam-se alvos triviais para:
-
-- Ataques de Força Bruta / Credential Stuffing: Robôs testando milhares de combinações de senhas por segundo no endpoint /auth/sessions.
-
-- Exaustão de Recursos (DoS): Requisições em massa sobrecarregando conexões de banco de dados e CPU.
-
-A aplicação divide o controle de taxa em duas camadas:
-
-1. Rate Limiting de Borda Ampla: Protege a API como um todo (ex: 100 requisições a cada 15 minutos por IP).
-
-2. Rate Limiting de Alta Sensibilidade: Focado estritamente em rotas de autenticação, recuperação de senha e emissão de tokens (ex: 5 tentativas a cada 5 minutos por IP).
-
-### 4. Assepsia de Entrada: Sanitização de Payloads (OWASP API8:2023 - Security Misconfiguration / Injections)
-
-Enquanto a validação de esquema (Zod) valida a forma dos dados (tipo, tamanho e formato), a sanitização atua na assepsia semântica:
-
-NoSQL / SQL Injection: Bibliotecas como express-mongo-sanitize removem operadores reservados (como $where, $ e .) que poderiam ser interpretados como comandos se passados acidentalmente para bancos de dados baseados em documentos ou queries dinâmicas.
-
-XSS Refletido / Armazenado: Impede que strings enviadas em campos de texto livre contenham tags como `<script>` ou eventos como onload=alert(), evitando que scripts sejam persistidos e executados na interface de outro cliente.
-
-### Configuração dos Middlewares de Segurança
-
-**Dependências:**
-
-Instalação dos pacotes de segurança e de validação de ambiente:
-
-```bash
-
-npm install helmet cors express-rate-limit express-mongo-sanitize dotenv
-npm install -D @types/cors
+                     ▲
+                    ╱ ╲
+                   ╱   ╲            1. TESTES E2E (Ponta a Ponta)
+                  ╱ E2E ╲           • Escopo: Borda HTTP até o Banco Real
+                 ╱───────╲          • Foco: Jornadas completas do usuário
+                ╱         ╲         • Características: Lentos (segundos/min), frágeis, caros
+               ╱Integração ╲
+              ╱─────────────╲       2. TESTES DE INTEGRAÇÃO
+             ╱               ╲      • Escopo: Comunicação entre camadas
+            ╱                 ╲     • Foco: Repositórios Prisma, Gateways de API, Middlewares
+           ╱    UNITÁRIOS      ╲    • Características: Velocidade média, validam integrações de I/O
+          ╱_____________________╲
+                                    3. TESTES UNITÁRIOS
+                                    • Escopo: Funções, Entidades, Use Cases
+                                    • Foco: Lógica de negócio pura e casos de borda
+                                    • Características: Ultrarrápidos (ms), isolados, determinísticos
 
 ```
 
-1. Rate Limiting (src/infrastructure/http/middlewares/rate-limiter.ts)
+| Dimensão              | Testes Unitários              | Testes de Integração               | Testes Ponta a Ponta (E2E)  |
+|-----------------------|-------------------------------|------------------------------------|-----------------------------|
+| Alvo no Código        | domain/, application/         | infrastructure/ (Prisma, Gateways) | main/, routes/, HTTP Server |
+| Tempo de Execução     | 1 a 5 milissegundos por teste | 100ms a 1s por teste               | 2 a 10s por suíte           |
+| Dependência de Banco? | ❌ Não (usa memória)          | ✔️ Sim (Docker/SQLite/Test DB)     | ✔️ Sim (Ambiente completo)  |
+| Custo de Manutenção   | Muito baixo                   | Médio                              | Alto (sujeito a flakiness)  |
+| Volume Recomendado    | 70% a 80% da base             | 15% a 20% da base                  | 5% a 10% da base            |
 
-Evita ataques de força bruta no login e mitiga negação de serviço (DoS/DDoS):
+## 3. O Vocabulário Essencial: Test Doubles (Gerard Meszaros)
+
+Muitas vezes usa-se a palavra "Mock" como sinônimo para qualquer dublê de teste. Na literatura clássica (xUnit Test Patterns), existem categorias distintas:
+
+1. Dummy: Objetos passados apenas para preencher parâmetros obrigatórios de um método, mas que nunca são efetivamente utilizados na lógica do teste (ex: um e-mail aleatório em um teste que só valida tamanho de array).
+
+2. Stub: Objeto que fornece respostas pré-programadas e prontas para as chamadas realizadas durante o teste (ex: um gateway que sempre devolve { valid: true } sem calcular nada).
+
+3. Spy: Um dublê que registra informações sobre como foi chamado (quais argumentos recebeu, quantas vezes foi invocado). Usado quando queremos verificar se um evento ou método colateral foi disparado.
+
+4. Mock: Objeto configurado com expectativas prévias sobre as chamadas que deve receber. Se não for invocado conforme o esperado, o teste falha.
+
+5. Fake: Possui uma implementação funcional real, porém simplificada e inadequada para produção por rodar em memória (ex: o InMemoryUserRepository e o FakeHashProvider). Este é o dublê padrão da Clean Architecture para isolar o Domínio.
+
+## 4. Configuração do Ecossistema Jest + TypeScript
+
+### A. Dependências de Desenvolvimento
+
+```txt
+
+npm install -D jest ts-jest @types/jest
+
+```
+
+### B. O Desafio dos Path Aliases no Jest (jest.config.ts)
+
+O TypeScript compila caminhos virtuais (@domain/*, @application/*) definidos no tsconfig.json. O Jest, no entanto, é executado pelo Node.js e não lê nativamente os aliases do TypeScript sem o devido mapeamento no moduleNameMapper.
 
 ```ts
 
-// src/infrastructure/http/middlewares/rate-limiter.ts
-import rateLimit from 'express-rate-limit';
+// jest.config.ts
+import type { Config } from 'jest';
 
-// Limitador global para rotas gerais da API
-export const apiRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // Janela de 15 minutos
-  max: 100, // Limite de 100 requisições por IP por janela
-  standardHeaders: true, // Retorna headers 'RateLimit-*'
-  legacyHeaders: false,
-  message: {
-    status: 'error',
-    message: 'Muitas requisições originadas deste IP. Tente novamente em 15 minutos.',
-  },
-});
+const config: Config = {
+  // 1. Motor de compilação TS sob demanda para os testes
+  preset: 'ts-jest',
+  testEnvironment: 'node',
 
-// Limitador estrito para rotas sensíveis (Login / Autenticação)
-export const authRateLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // Janela de 5 minutos
-  max: 5, // Apenas 5 tentativas consecutivas antes de bloquear
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    status: 'error',
-    message: 'Muitas tentativas de autenticação. Tente novamente em 5 minutos.',
-  },
-});
+  // 2. Onde procurar arquivos de teste
+  roots: ['<rootDir>/src', '<rootDir>/tests'],
+  testMatch: [
+    '**/*.spec.ts', // Padrão unitário (especificação de comportamento)
+    '**/*.test.ts', // Padrão integração / E2E
+  ],
 
-```
+  // 3. Limpeza automática de espiões e mocks antes de cada teste
+  clearMocks: true,
 
-2. Configuração de CORS Restritivo (src/infrastructure/http/config/cors-options.ts)
-
-```ts
-
-// src/infrastructure/http/config/cors-options.ts
-import { CorsOptions } from 'cors';
-import { env } from '@infrastructure/config/env';
-
-const allowedOrigins = [
-  env.FRONTEND_URL, // Origem autorizada (ex: http://localhost:3000)
-];
-
-export const corsOptions: CorsOptions = {
-  origin: (origin, callback) => {
-    // Permite chamadas sem origin (Swagger local, mobile, curl) ou presentes na whitelist
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error('Origem não permitida pela política de CORS.'));
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-};
-
-```
-
-3. Configuração dos Headers de Segurança HTTP com Helmet (src/infrastructure/http/config/helmet-options.ts)
-
-O Helmet por padrão já remove o header identificador X-Powered-By e ativa cabeçalhos como nosniff e HSTS. Contudo, em APIs que servem documentação interativa (como o Swagger UI), a diretiva padrão de Content Security Policy (CSP) bloqueia os scripts e estilos embutidos da interface gráfica.
-
-Configuramos uma política sob medida com suporte ao Swagger e proteção contra clickjacking e MIME-sniffing:
-
-```ts
-
-// src/infrastructure/http/config/helmet-options.ts
-import { HelmetOptions } from 'helmet';
-
-export const helmetOptions: HelmetOptions = {
-  // Oculta a tecnologia do servidor para evitar reconhecimento de exploits do Express
-  hidePoweredBy: true,
-
-  // Força HTTPS por 1 ano (incluindo subdomínios e lista de preload do navegador)
-  hsts: {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true,
+  // 4. Mapeamento dos Path Aliases idêntico ao tsconfig.json
+  moduleNameMapper: {
+    '^@domain/(.*)$': '<rootDir>/src/domain/$1',
+    '^@application/(.*)$': '<rootDir>/src/application/$1',
+    '^@infrastructure/(.*)$': '<rootDir>/src/infrastructure/$1',
+    '^@main/(.*)$': '<rootDir>/src/main/$1',
+    '^@tests/(.*)$': '<rootDir>/tests/$1',
   },
 
-  // Impede que a API seja incorporada em <iframe> de sites externos (anti-Clickjacking)
-  frameguard: {
-    action: 'deny',
-  },
-
-  // Força o navegador a respeitar o Content-Type (bloqueia sniffing de MIME types)
-  noSniff: true,
-
-  // Content Security Policy flexibilizado exclusivamente para permitir o Swagger UI inline
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"], // Permite scripts de visualização do Swagger
-      styleSrc: ["'self'", "'unsafe-inline'"],  // Permite estilos CSS do Swagger
-      imgSrc: ["'self'", 'data:', 'https:'],
+  // 5. Cobertura de Código (Code Coverage)
+  collectCoverageFrom: [
+    'src/domain/**/*.ts',
+    'src/application/useCases/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/index.ts',
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text-summary', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
     },
   },
 };
 
+export default config;
+
 ```
 
-4. Sanitização e Assepsia de Entrada (src/infrastructure/http/middlewares/sanitize-request.ts)
+### C. Mapa Completo de Scripts no package.json
 
-A sanitização atua desarmando payloads maliciosos em req.body, req.params e req.query antes que cheguem aos validadores de schema (Zod) e aos controllers.
+O ecossistema de scripts no package.json determina o fluxo de trabalho diário do desenvolvedor e a esteira de integração contínua (CI/CD).
 
-Criamos um middleware unificado que combina:
+Para uma API, organizamos os comandos em execução local rápida, segmentação por camada da pirâmide e auditoria de qualidade.
 
-Defesa contra NoSQL/Object Injection (express-mongo-sanitize): Remove operadores proibidos como chaves iniciadas por $ ou com `.`.
+```json
 
-Defesa contra XSS (Cross-Site Scripting): Faz a assepsia recursiva de strings contra injeção de tags HTML (`<script>`, `<iframe>`) e manipuladores de eventos (onload=, onerror=).
+{
+  "scripts": {
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:integration": "dotenv -e .env.test -- jest --testPathPattern=tests/integration --runInBand",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --runInBand"
+  }
+}
+
+```
+
+O que cada flag e script faz na prática:
+
+- npm test (jest --runInBand): Executa todos os testes de forma sequencial em um único processo. Evita condições de corrida (race conditions) quando há acesso compartilhado ao banco de testes.
+
+- npm run test:watch (jest --watch): Modo interativo durante o desenvolvimento. O Jest monitora os arquivos salvos no Git e reexecuta apenas os testes afetados pelas modificações em tempo real.
+
+- npm run test:unit (--testPathPattern=tests/unit): Filtra e executa exclusivamente a base da pirâmide (testes de domínio e casos de uso em memória). Leva poucos milissegundos e não depende de Docker ou banco ativo.
+
+- npm run test:integration: Carrega as variáveis isoladas do .env.test (apontando para o banco de testes) e executa apenas as suítes HTTP/Prisma.
+
+- npm run test:coverage (jest --coverage): Instrumenta o código-fonte para rastrear cada linha e desvio lógico executado, gerando a tabela matricial no terminal e o relatório visual em HTML na pasta coverage/lcov-report/index.html.
+
+- npm run test:ci: Comando otimizado para pipelines (GitHub Actions / GitLab CI). Desativa modos interativos, força a coleta de cobertura e falha o build caso os thresholds mínimos (ex: 80%) não sejam atingidos.
+
+### D. Entendendo Métricas de Cobertura (Code Coverage)
+
+Ao executar npm run test:coverage, o Jest gera um relatório matricial semelhante a esta no terminal:
+
+```bash
+
+----------------------------------|---------|----------|---------|---------|-------------------
+File                              | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+----------------------------------|---------|----------|---------|---------|-------------------
+All files                         |   88.46 |    75.00 |   90.00 |   88.46 |
+ domain/entities                  |  100.00 |   100.00 |  100.00 |  100.00 |
+  user.ts                         |  100.00 |   100.00 |  100.00 |  100.00 |
+ application/useCases             |   84.21 |    66.66 |   85.71 |   84.21 |
+  create-user.use-case.ts         |  100.00 |   100.00 |  100.00 |  100.00 |
+  refresh-token.use-case.ts       |   72.72 |    50.00 |   75.00 |   72.72 | 28-34
+----------------------------------|---------|----------|---------|---------|-------------------
+
+```
+
+**Como interpretar cada coluna:**
+
+1. % Branch (A métrica mais importante): Se um if (new Date() > token.expiresIn) só foi testado com tokens válidos (caminho false), o % Branch daquele arquivo será 50%. É o principal indicador de que faltam testes para cenários de erro e exceção.
+
+2. Uncovered Line #s (ex: 28-34): Aponta exatamente quais linhas físicas do arquivo nunca foram atingidas por nenhum teste — ideal para identificar regras de negócio esquecidas ou código morto (dead code).
+
+3. Relatório HTML Interativo: Ao abrir coverage/lcov-report/index.html no navegador, o aluno consegue clicar em cada arquivo e ver visualmente:
+
+- Verde: Linha e ramificação cobertas.
+
+- Amarelo (I ou E): Apenas o bloco if ou apenas o bloco else foi executado.
+
+- Vermelho: Trecho de código nunca executado.
+
+**Observações:**
+
+- Statements (Declarações): Porcentagem de instruções de código executadas pelo menos uma vez durante a suíte.
+
+- Branches (Ramificações): Porcentagem de caminhos lógicos testados em estruturas condicionais (if/else, operadores ternários ? :, switch).
+
+- Functions (Funções): Porcentagem de métodos e funções chamadas.
+
+- Lines (Linhas): Porcentagem de linhas físicas de código executadas.
+
+**Cuidado com a Ilusão do 100% de Cobertura:**
+
+Cobertura mede quais linhas foram executadas, não se as asserções de negócio estão corretas. Um teste que executa uma função sem nenhum expect dá 100% de cobertura, mas 0% de confiança! O objetivo é cobrir comportamentos e regras de negócio, não linhas de código.
+
+### E. O Que Deve Ser Ignorado na Cobertura (collectCoverageFrom)
+
+Para não distorcer a métrica cobrindo arquivos declarativos ou puramente estruturais, configuramos exclusões cirúrgicas no jest.config.ts:
+
+Interfaces e Contratos (`*.repository.ts, *.d.ts`): Não possuem lógica executável em tempo de execução no JavaScript compilado.
+
+Arquivos de Exportação (index.ts): Apenas reexportam módulos.
+
+Factories de Injeção (src/main/factories/**): Apenas instanciam classes concretas (são cobertas indiretamente pelos testes de integração/E2E).
+
+## 5. Implementação Prática: Testando o Core Sem Banco de Dados
+
+### A. O Dublê de Teste: tests/mocks/in-memory-user-repository.ts
+
+Ao invés de conectar ao PostgreSQL e rodar migrações a cada teste unitário, usamos uma coleção em memória (Array) que implementa a interface de domínio IUserRepository:
 
 ```ts
 
-// src/infrastructure/http/middlewares/sanitize-request.ts
-import { Request, Response, NextFunction } from 'express';
-import mongoSanitize from 'express-mongo-sanitize';
+// tests/mocks/in-memory-user-repository.ts
+import { IUserRepository } from '@domain/repositories/user.repository';
+import { User } from '@domain/entities/user';
+import { randomUUID } from 'crypto';
 
-/**
- * Remove tags HTML e atributos inline maliciosos de strings.
- */
-function sanitizeString(value: string): string {
-  return value
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Remove blocos <script>
-    .replace(/<[^>]+>/g, '') // Remove tags HTML remanescentes
-    .replace(/javascript:/gi, '') // Remove esquemas de pseudo-protocolo
-    .replace(/on\w+\s*=/gi, ''); // Remove eventos inline como onload=, onerror=
+export class InMemoryUserRepository implements IUserRepository {
+  public items: User[] = [];
+
+  async create(user: User): Promise<void> {
+    const userToSave = new User({
+      id: user.id || randomUUID(),
+      name: user.name,
+      email: user.email,
+      password: user.password,
+      role: user.role,
+      createdAt: user.createdAt || new Date(),
+    });
+
+    this.items.push(userToSave);
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    const user = this.items.find((item) => item.email === email);
+    return user || null;
+  }
+
+  async findById(id: string): Promise<User | null> {
+    const user = this.items.find((item) => item.id === id);
+    return user || null;
+  }
+
+  async findAll(): Promise<User[]> {
+    return this.items;
+  }
 }
 
-/**
- * Percorre recursivamente o objeto/array aplicando a assepsia de strings.
- */
-function deepSanitize(target: unknown): unknown {
-  if (typeof target === 'string') {
-    return sanitizeString(target);
+```
+
+### B. O Dublê de Teste: tests/mocks/fake-hash-provider.ts
+
+Criptografar senhas com bcrypt (10 rounds de salt) consome centenas de milissegundos de processamento de CPU propositalmente. Em testes unitários, usamos um hash determinístico falso:
+
+```ts
+
+// tests/mocks/fake-hash-provider.ts
+import { HashProvider } from '@domain/providers/hash-provider';
+
+export class FakeHashProvider implements HashProvider {
+  async generateHash(payload: string): Promise<string> {
+    return `hashed_${payload}`;
   }
 
-  if (Array.isArray(target)) {
-    return target.map(deepSanitize);
+  async compareHash(payload: string, hashed: string): Promise<boolean> {
+    return `hashed_${payload}` === hashed;
   }
-
-  if (target !== null && typeof target === 'object') {
-    const sanitizedObj: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(target)) {
-      sanitizedObj[key] = deepSanitize(value);
-    }
-    return sanitizedObj;
-  }
-
-  return target;
 }
 
-// 1. Instância do sanitizador NoSQL
-const noSqlSanitizer = mongoSanitize({
-  replaceWith: '_', // Substitui operadores suspeitos por '_' em vez de quebrar a requisição
-});
+```
 
-/**
- * Middleware composto de sanitização profunda (NoSQL + XSS)
- */
-export const sanitizeRequest = (req: Request, res: Response, next: NextFunction): void => {
-  // Executa primeiro a remoção de operadores reservados de injeção NoSQL/Mongo
-  noSqlSanitizer(req, res, () => {
-    // Em seguida, aplica a assepsia de tags HTML/XSS nas entradas textuais
-    if (req.body && typeof req.body === 'object') {
-      req.body = deepSanitize(req.body);
-    }
+### C. A Suíte de Testes Unitários: Padrão AAA (Arrange, Act, Assert)
 
-    if (req.query && typeof req.query === 'object') {
-      req.query = deepSanitize(req.query) as typeof req.query;
-    }
+O padrão AAA organiza o teste de forma semântica e legível:
 
-    if (req.params && typeof req.params === 'object') {
-      req.params = deepSanitize(req.params) as typeof req.params;
-    }
+1. Arrange (Arranjar): Prepara o cenário, instanciando os dublês e o objeto sob teste (SUT).
 
-    next();
+2. Act(Agir): Executa a operação que está sendo validada.
+
+3. Assert(Afirmar): Checa se o resultado obtido corresponde exatamente à expectativa de negócio.
+
+```ts
+
+// tests/unit/create-user.use-case.spec.ts
+import { CreateUserUseCase } from '@application/useCases/create-user.use-case';
+import { InMemoryUserRepository } from '../mocks/in-memory-user-repository';
+import { FakeHashProvider } from '../mocks/fake-hash-provider';
+import { ConflictError } from '@domain/errors/conflict.error';
+
+describe('CreateUserUseCase (Unit)', () => {
+  let userRepository: InMemoryUserRepository;
+  let hashProvider: FakeHashProvider;
+  let sut: CreateUserUseCase; // SUT = System Under Test
+
+  beforeEach(() => {
+    // Isola cada teste em um ambiente limpo
+    userRepository = new InMemoryUserRepository();
+    hashProvider = new FakeHashProvider();
+    sut = new CreateUserUseCase(userRepository, hashProvider);
   });
-};
 
-```
+  it('deve cadastrar um novo treinador com senha hasheada e papel USER por padrão', async () => {
+    // 1. Arrange
+    const input = {
+      name: 'Ash Ketchum',
+      email: 'ash@palettown.com',
+      password: 'pikachuMaster123',
+    };
 
-Como plugar ambos no src/main/app.ts
+    // 2. Act
+    const user = await sut.execute(input);
 
-```ts
+    // 3. Assert
+    expect(user).toHaveProperty('id');
+    expect(user.name).toBe(input.name);
+    expect(user.email).toBe(input.email);
+    expect(user.password).toBe('hashed_pikachuMaster123'); // Valida aplicação do hash
+    expect(user.role).toBe('USER'); // Garante papel de menor privilégio
+    expect(userRepository.items).toHaveLength(1);
+    expect(userRepository.items[0].email).toBe(input.email);
+  });
 
-// src/main/app.ts
-import 'express-async-errors';
-import express, { Express } from 'express';
-import helmet from 'helmet';
-import cors from 'cors';
-import swaggerUi from 'swagger-ui-express';
+  it('deve rejeitar o cadastro lançando ConflictError caso o e-mail já esteja em uso', async () => {
+    // 1. Arrange: pré-cadastra um usuário com o mesmo e-mail
+    await sut.execute({
+      name: 'Gary Oak',
+      email: 'gary@palettown.com',
+      password: 'blastoiseRocks123',
+    });
 
-// 1. Configurações dos 4 pilares de segurança de borda
-import { helmetOptions } from '@infrastructure/http/config/helmet-options';
-import { corsOptions } from '@infrastructure/http/config/cors-options';
-import { apiRateLimiter, authRateLimiter } from '@infrastructure/http/middlewares/rate-limiter';
-import { sanitizeRequest } from '@infrastructure/http/middlewares/sanitize-request';
+    // 2. Act & 3. Assert: tenta recadastrar com o mesmo e-mail
+    await expect(
+      sut.execute({
+        name: 'Gary Clone',
+        email: 'gary@palettown.com',
+        password: 'outraSenha123',
+      })
+    ).rejects.toBeInstanceOf(ConflictError);
 
-// Rotas, documentação e tratamento de erros
-import { routes } from '@infrastructure/http/routes';
-import { errorHandler } from '@infrastructure/http/middlewares/error-handler';
-import swaggerFile from '../infrastructure/http/docs/swagger-output.json';
-
-const app: Express = express();
-
-/* -------------------------------------------------------------------------- */
-/* [PONTO 1] HEADERS DEFENSIVOS COM HELMET                                    */
-/* -------------------------------------------------------------------------- */
-// Aplica HSTS, No-Sniff, Frameguard (anti-clickjacking) e libera assets do Swagger
-app.use(helmet(helmetOptions));
-
-/* -------------------------------------------------------------------------- */
-/* [PONTO 2] ISOLAMENTO DE ORIGEM (CORS RESTRICTIVO)                         */
-/* -------------------------------------------------------------------------- */
-// Limita o consumo do navegador à whitelist permitida (FRONTEND_URL)
-app.use(cors(corsOptions));
-
-/* -------------------------------------------------------------------------- */
-/* [PONTO 3] RATE LIMITING GLOBAL (ANTI-DOS)                                  */
-/* -------------------------------------------------------------------------- */
-// Limita requisições por IP na borda antes de alocar memória com parse de body
-app.use('/api', apiRateLimiter);
-
-/* -------------------------------------------------------------------------- */
-/* BODY PARSERS COM LIMITE DE CARGA                                           */
-/* -------------------------------------------------------------------------- */
-// Evita exaustão de buffer com payloads gigantescos
-app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ extended: true, limit: '10kb' }));
-
-/* -------------------------------------------------------------------------- */
-/* [PONTO 4] SANITIZAÇÃO DE ENTRADA (ANTI-XSS & ANTI-NOSQL INJECTION)         */
-/* -------------------------------------------------------------------------- */
-// Remove operadores de injeção ($ e .) e higieniza tags HTML em body, query e params
-app.use(sanitizeRequest);
-
-/* -------------------------------------------------------------------------- */
-/* DOCUMENTAÇÃO DA API (SWAGGER UI)                                           */
-/* -------------------------------------------------------------------------- */
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerFile));
-
-/* -------------------------------------------------------------------------- */
-/* [PONTO 3.B] RATE LIMITING ESTRITO PARA ENDPOINTS SENSÍVEIS (ANTI-BRUTE)    */
-/* -------------------------------------------------------------------------- */
-// Limita tentativas consecutivas de autenticação a no máximo 5 requisições por janela
-app.use('/api/v1/auth/sessions', authRateLimiter);
-app.use('/api/v1/auth/refresh-token', authRateLimiter);
-
-/* -------------------------------------------------------------------------- */
-/* ROTEAMENTO PRINCIPAL                                                       */
-/* -------------------------------------------------------------------------- */
-app.use('/api/v1', routes);
-
-/* -------------------------------------------------------------------------- */
-/* TRATAMENTO GLOBAL DE EXCEÇÕES                                              */
-/* -------------------------------------------------------------------------- */
-app.use(errorHandler);
-
-export { app };
-
-```
-
-Por que esta ordem é fundamental?
-
-- helmet() no topo: Garante que até respostas rejeitadas nas camadas seguintes (como um 403 do CORS ou um 429 de Rate Limit) já saiam do servidor com os headers de segurança corretos e sem o cabeçalho X-Powered-By: Express.
-
-- apiRateLimiter antes do express.json(): Se um atacante enviar milhares de requisições de 10 megabytes para derrubar o servidor, o rate limiter rejeitará a chamada no nível do IP com status 429 Too Many Requests antes que o Node.js gaste memória convertendo strings para objetos JSON.
-
-- express.json({ limit: '10kb' }) com cota explícita: Evita ataques de exaustão de buffer por payloads intencionalmente gigantescos.
-
-- mongoSanitize() logo após os parsers: A assepsia precisa ser aplicada assim que o req.body existir, para que qualquer middleware subsequente (como o validador Zod ou os Controllers) já receba dados desarmados.
-
-- errorHandler no final absoluto: Qualquer erro lançado em middlewares anteriores ou dentro dos Controllers é capturado aqui, evitando vazamento de stack traces do servidor para o cliente final.
-
-## Gestão de Segredos & Validação de Ambiente com Zod
-
-Configurações e segredos de infraestrutura (chaves JWT, credenciais de banco, URLs de serviços terceiros) não devem ser embutidos no código-fonte. O princípio III do [The Twelve-Factor App](https://12factor.net/pt_br/) determina a separação rígida entre código e configuração.
-
-```txt
-
- ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
- │   .env.example  │       │      .env       │       │    env.ts       │
- │   (Contrato)    │ ────► │ (Valores Reais) │ ────► │  (Parse Zod)    │
- │ (Versionado Git)│       │ (Git Ignored)   │       │ (Fail-Fast Boot)│
- └─────────────────┘       └─────────────────┘       └────────┬────────┘
-                                                              │
-                                      ┌───────────────────────┴───────────────────────┐
-                                      │                                               │
-                                      ▼                                               ▼
-                                 [ Sucesso ]                                     [ Falha ]
-                            Tipagem Segura (Autocomplete)              process.exit(1) com Relatório
-
-```
-
-### 1. O Risco de Falhas Silenciosas em Tempo de Execução (Runtime)
-
-O Node.js expõe variáveis de ambiente através de process.env. No entanto, process.env apresenta três fragilidades graves:
-
-1. Tipagem Fraca: Todas as variáveis em process.env são tratadas como string | undefined.
-
-2. Falhas Tardiás (Late-Fails): Se a variável JWT_SECRET for esquecida no arquivo .env, o servidor sobe normalmente sem erros. A falha só ocorrerá horas depois, no primeiro login de um usuário, disparando um erro 500 em produção.
-
-3. Conversões Manuais Inconsistentes: Variáveis como PORT=3333 chegam como texto ("3333"), exigindo conversões manuais espalhadas pelo código com risco de valores NaN.
-
-### 2. O Princípio do Fail-Fast no Boot
-
-O padrão Fail-Fast estabelece que, se o ambiente não possui as pré-condições necessárias para operar de forma segura e íntegra, o processo deve ser abortado imediatamente durante a inicialização, antes mesmo de abrir a porta HTTP ou escutar conexões.
-
-Ao utilizar o Zod para validar o process.env:
-
-- Validação Estrutural: O Zod verifica obrigatoriedade, tamanho mínimo (ex: JWT_SECRET com no mínimo 32 caracteres para impedir chaves fracas), URLs válidas e enums de ambiente (NODE_ENV).
-
-- Coerção Segura: Tipos numéricos como PORT são convertidos de forma determinística via z.coerce.number().
-
-- Imutabilidade e Previsibilidade: O objeto exportado env é congelado, validado e completamente tipado, eliminando acessos diretos e desprotegidos ao process.env no restante da aplicação.
-
-### 3. Anatomia do .env.example
-
-.env.example funciona como uma especificação contratual de infraestrutura. Ele:
-
-- É obrigatoriamente versionado no repositório Git.
-
-- Não contém senhas, chaves privadas ou credenciais reais de produção.
-
-- Documenta todas as variáveis necessárias para que novos desenvolvedores e esteiras de CI/CD saibam exatamente quais parâmetros precisam ser fornecidos para instanciar a API.
-
-Arquivo versionado no Git com todos os nomes de variáveis necessários (sem valores confidenciais):
-
-```txt
-
-# Configurações do Servidor
-NODE_ENV=development
-PORT=3333
-
-# Banco de Dados
-DATABASE_URL="postgresql://user:password@localhost:5432/manager_db?schema=public"
-
-# Segurança e JWT
-JWT_SECRET="chave_secreta_longa_com_no_minimo_32_caracteres_aleatorios"
-JWT_EXPIRES_IN="15m"
-
-# Integrações & Gateways
-VIA_CEP_BASE_URL="https://viacep.com.br/ws"
-FRONTEND_URL="http://localhost:3000"
-
-```
-
-### B. Validador de Schema com Zod (src/infrastructure/config/env.ts)
-
-```ts
-
-// src/infrastructure/config/env.ts
-import 'dotenv/config';
-import { z } from 'zod';
-
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().default(3333),
-  DATABASE_URL: z.string().url('DATABASE_URL deve ser uma URL válida de conexão'),
-  JWT_SECRET: z.string().min(32, 'JWT_SECRET deve ter no mínimo 32 caracteres para segurança adequada'),
-  JWT_EXPIRES_IN: z.string().default('15m'),
-  VIA_CEP_BASE_URL: z.string().url().default('https://viacep.com.br/ws'),
-  FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+    // Garante que o usuário duplicado não foi inserido
+    expect(userRepository.items).toHaveLength(1);
+  });
 });
 
-// Faz o parsing das variáveis do process.env
-const _env = envSchema.safeParse(process.env);
-
-if (!_env.success) {
-  console.error('❌ Variáveis de ambiente inválidas ou ausentes:');
-  console.error(JSON.stringify(_env.error.format(), null, 2));
-
-  // Encerra imediatamente o processo caso a configuração falhe (Fail-Fast)
-  process.exit(1);
-}
-
-export const env = _env.data;
-
 ```
+
+**Outro padrão popular em testes unitários:**
+
+O padrão Given-When-Then também é muito comum no desenvolvimento orientado a comportamento (BDD) e em testes de aceitação:
+
+1. Given (Dado que): Equivalente ao Arrange (contexto inicial).
+
+2. When (Quando): Equivalente ao Act (ação realizada).
+
+3. Then (Então): Equivalente ao Assert (resultado esperado).
