@@ -1,78 +1,85 @@
-# Atividades de Configuração do Ambiente de Testes — PokéManager API
+# Atividades
 
-Este documento guia a estruturação e validação do ecossistema de testes automatizados com **Jest** e **TypeScript**, garantindo o isolamento arquitetural da Clean Architecture, resolução correta de Path Aliases e métricas de cobertura de código.
-
----
-
-## 📦 1. Instalação de Dependências
-
-* [ ] **1.1. Instalar o motor de testes e compilador TypeScript**
-  * Executar no terminal:
-    ```bash
-    npm install -D jest ts-jest @types/jest
-    ```
-* [ ] **1.2. Instalar ferramentas auxiliares para testes de borda e variáveis de ambiente (Preparação para Integração)**
-  * Executar no terminal:
-    ```bash
-    npm install -D supertest @types/supertest dotenv-cli
-    ```
+Este documento consolida todas as tarefas práticas necessárias para cobrir a **Pirâmide de Testes** da **PokéManager API**, desde o núcleo isolado de Domínio/Aplicação até a borda HTTP integrada com banco de dados de testes.
 
 ---
 
-## ⚙️ 2. Configuração do Jest & Path Aliases
+## 🧩 Parte 1: Testes Unitários (Domínio & Aplicação)
 
-* [ ] **2.1. Criar o arquivo `jest.config.ts` na raiz do projeto**
-  * Configurar o preset `ts-jest` e `testEnvironment: 'node'`.
-  * Definir o mapeamento de `moduleNameMapper` espelhando os aliases do `tsconfig.json`:
-    * `@domain/*` $\rightarrow$ `<rootDir>/src/domain/$1`
-    * `@application/*` $\rightarrow$ `<rootDir>/src/application/$1`
-    * `@infrastructure/*` $\rightarrow$ `<rootDir>/src/infrastructure/$1`
-    * `@main/*` $\rightarrow$ `<rootDir>/src/main/$1`
-    * `@tests/*` $\rightarrow$ `<rootDir>/tests/$1`
-  * Configurar `clearMocks: true` para isolamento entre os casos de teste.
-* [ ] **2.2. Configurar thresholds e diretivas de cobertura (`collectCoverageFrom`)**
-  * Incluir `src/domain/**/*.ts` e `src/application/useCases/**/*.ts`.
-  * Excluir tipagens (`*.d.ts`), arquivos de exportação (`index.ts`) e interfaces puras.
-  * Estabelecer meta mínima global (`coverageThreshold`) de **80%** para *branches*, *functions*, *lines* e *statements*.
-* [ ] **2.3. Verificar inclusão da pasta `tests/` no `tsconfig.json`**
-  * Garantir que o TypeScript reconheça os arquivos `.spec.ts` e `.test.ts` sem gerar erros de compilação ou incluir arquivos de teste no build de produção (`dist/`).
+**Premissa:** Zero I/O (sem Express, sem PostgreSQL, sem chamadas de rede). Todos os testes devem rodar em milissegundos usando dublês em memória (*Fakes*) e aplicando o padrão **AAA (Arrange, Act, Assert)** e princípios **F.I.R.S.T.**
 
----
+### 1.1. Dublês de Teste (Test Doubles em `tests/mocks/`)
 
-## 📜 3. Scripts de Automação (`package.json`)
+* [ ] **Criar `in-memory-user-repository.ts`**: Implementar `create`, `findByEmail`, `findById` e `findAll` armazenando usuários em um array local.
+* [ ] **Criar `in-memory-token-repository.ts`**: Implementar `createRefreshToken`, `findRefreshToken`, `deleteRefreshTokenByUserId`, `invalidateToken` e `isTokenInvalidated` (usando `Set` em memória para a Blacklist).
+* [ ] **Criar `fake-hash-provider.ts`**: Implementar `generateHash` e `compareHash` de forma determinística e instantânea (`hashed_${payload}`).
 
-* [ ] **3.1. Adicionar os comandos de execução na seção `"scripts"` do `package.json`:**
-  * `"test": "jest --runInBand"` (Execução sequencial completa)
-  * `"test:watch": "jest --watch"` (Modo interativo em tempo real durante o desenvolvimento)
-  * `"test:unit": "jest --testPathPattern=tests/unit"` (Execução ultrarrápida apenas da camada de domínio/aplicação)
-  * `"test:coverage": "jest --coverage"` (Geração de relatório matricial no terminal e visual em HTML)
-  * `"test:ci": "jest --ci --coverage --runInBand"` (Execução estrita para pipelines de CI/CD)
-* [ ] **3.2. Ignorar diretório de relatórios no `.gitignore`**
-  * Adicionar `coverage/` ao arquivo `.gitignore` para evitar versionamento de arquivos gerados.
+### 1.2. Testes de Entidades de Domínio (`tests/unit/domain/`)
 
----
+* [ ] **`user.spec.ts`**:
+  * [ ] Validar criação da entidade atribuindo `role: 'USER'` por padrão quando não especificado.
+  * [ ] Validar geração automática de `id` e timestamps (`createdAt`, `updatedAt`).
+  * [ ] Validar atualização de senha ou propriedades garantindo imutabilidade/consistência de invariantes.
 
-## 📁 4. Estruturação de Diretórios e Dublês (Test Doubles)
+### 1.3. Testes de Casos de Uso (`tests/unit/use-cases/`)
 
-* [ ] **4.1. Criar a árvore de diretórios de testes na raiz:**
-  ```text
-  tests/
-  ├── unit/          # Testes isolados de Entidades e Use Cases (*.spec.ts)
-  ├── integration/   # Testes de Repositórios, Middlewares e Endpoints (*.test.ts)
-  └── mocks/         # Implementações In-Memory e Fakes reutilizáveis
-  ```
-* [ ] **4.2. Implementar dublês base em `tests/mocks/`:**
-  * `in-memory-user-repository.ts`: Implementação em memória da interface `IUserRepository`.
-  * `in-memory-token-repository.ts`: Implementação em memória da interface `TokenRepository` (Refresh Tokens + Blacklist).
-  * `fake-hash-provider.ts`: Dublê determinístico rápido da interface `HashProvider` (substituindo o custo de CPU do `bcrypt`).
+* [ ] **`create-user.use-case.spec.ts`**:
+  * [ ] Cadastrar novo usuário com senha hasheada e papel padrão `USER`.
+  * [ ] Lançar `ConflictError` ao tentar cadastrar e-mail já existente (Análise de Fronteira).
+* [ ] **`authenticate-user.use-case.spec.ts`**:
+  * [ ] Gerar par de tokens (`token` JWT + `refreshToken`) quando credenciais estiverem corretas.
+  * [ ] Lançar `UnauthorizedError` quando o e-mail não for encontrado.
+  * [ ] Lançar `UnauthorizedError` quando a senha estiver incorreta.
+* [ ] **`refresh-token.use-case.spec.ts`**:
+  * [ ] Emitir novo `AccessToken` e novo `RefreshToken` rotacionado, invalidando o anterior.
+  * [ ] Lançar `UnauthorizedError` quando o Refresh Token fornecido não existir.
+  * [ ] Lançar `UnauthorizedError` e expurgar o registro quando o Refresh Token estiver expirado (`expiresIn < now`).
+* [ ] **`get-current-user.use-case.spec.ts`**:
+  * [ ] Retornar o DTO sanitizado do perfil do usuário (garantindo ausência do campo `password`).
+  * [ ] Lançar `NotFoundError` caso o ID do usuário não exista na base.
+
+### 1.4. Auditoria de Cobertura Unitária
+
+* [ ] Executar `npm run test:unit` e verificar tempo de execução abaixo de 2 segundos.
+* [ ] Executar `npm run test:coverage` e validar se os indicadores de **`% Branch`** estão acima de **80%** em todos os Use Cases.
 
 ---
 
-## ✅ 5. Validação do Ambiente (Smoke Test)
+## 🌐 Parte 2: Testes de Integração & E2E (Supertest + Banco de Testes)
 
-* [ ] **5.1. Criar o primeiro teste unitário (`tests/unit/create-user.use-case.spec.ts`)**
-  * Cobrir o fluxo de criação com sucesso (padrão AAA: Arrange, Act, Assert).
-  * Cobrir a regra de negócio de bloqueio por e-mail duplicado (`ConflictError`).
-* [ ] **5.2. Executar e validar a suíte**
-  * Rodar `npm run test:unit` e confirmar execução em milissegundos sem depender de Docker/Banco ativo.
-  * Rodar `npm run test:coverage` e abrir `coverage/lcov-report/index.html` no navegador para inspecionar a cobertura visual.
+**Premissa:** Validar o fluxo HTTP real passando por todos os middlewares de borda (`helmet`, `cors`, `rate-limiter`, `sanitizeRequest`, `ensureAuthenticated`, `ensureRole`), validação Zod e persistência real no PostgreSQL via Prisma.
+
+### 2.1. Infraestrutura Isolada de Testes
+
+* [ ] **Criar contrato `.env.test` na raiz do projeto**:
+  * [ ] Configurar `NODE_ENV=test` e `PORT=3334`.
+  * [ ] Apontar `DATABASE_URL` para um banco de dados exclusivo de testes (`pokemanager_test`) separado do banco de desenvolvimento.
+  * [ ] Definir `JWT_SECRET` válido (mínimo 32 caracteres).
+* [ ] **Criar helper de reset do banco (`tests/helpers/reset-db.ts`)**:
+  * [ ] Implementar função `resetDatabase()` executando `deleteMany()` em transação (`refreshToken` seguido de `user`) para garantir independência entre testes.
+* [ ] **Configurar script no `package.json`**:
+  * [ ] `"test:integration": "dotenv -e .env.test -- npx prisma migrate deploy && dotenv -e .env.test -- jest --testPathPattern=tests/integration --runInBand"`
+  * [ ] Garantir o uso da flag `--runInBand` para impedir *race conditions* entre suítes que compartilham o banco.
+
+### 2.2. Suítes de Integração HTTP (`tests/integration/`)
+
+* [ ] **`auth-flow.test.ts` (Ciclo de Vida Completo de Sessão)**:
+  * [ ] `POST /api/v1/users`: Cadastrar usuário (`201 Created`) e validar omissão da senha no JSON de resposta.
+  * [ ] `POST /api/v1/auth/sessions`: Autenticar usuário (`200 OK`) e extrair `token` e `refreshToken`.
+  * [ ] `GET /api/v1/auth/me`: Acessar rota protegida com header `Authorization: Bearer <token>` (`200 OK`).
+  * [ ] `POST /api/v1/auth/refresh-token`: Renovar sessão (`200 OK`) e validar que o Refresh Token antigo não pode mais ser reutilizado (`401 Unauthorized`).
+  * [ ] `POST /api/v1/auth/logout`: Encerrar sessão (`200 OK`) e validar que tentativas subsequentes em `/auth/me` com o mesmo Access Token sejam barradas pela Blacklist (`401 Unauthorized`).
+* [ ] **`security-hardening.test.ts` (Blindagem OWASP & RBAC)**:
+  * [ ] **Sanitização XSS:** Enviar `<script>alert("xss")</script>` no campo `name` no cadastro e validar que a tag foi removida antes da persistência.
+  * [ ] **Controle de Acesso (RBAC):** Tentar acessar endpoint exclusivo de administrador com token de usuário `USER` e validar retorno `403 Forbidden`.
+  * [ ] **Validação de Payload (Zod):** Enviar e-mail malformado ou senha curta e validar retorno `400 Bad Request` estruturado.
+  * [ ] **Rate Limiting:** Disparar 6 tentativas consecutivas de login e confirmar bloqueio da borda com `429 Too Many Requests`.
+* [ ] **`address-gateway.test.ts` (Fronteiras Externas Herméticas)**:
+  * [ ] Interceptar requisições HTTP para o ViaCEP (usando `nock` ou mock do gateway) para simular resposta `200 OK` e `404 Not Found` sem depender de acesso externo à internet.
+
+---
+
+## 🚀 Parte 3: Validação Final da Pipeline (CI Ready)
+
+* [ ] Executar `npm run test:all` garantindo que tanto `test:unit` quanto `test:integration` passem sem falhas intermitentes (*flakiness*).
+* [ ] Validar desconexão limpa do Prisma (`await prisma.$disconnect()`) no hook `afterAll` de todas as suítes de integração para evitar avisos de *open handles* no Jest.
