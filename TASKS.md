@@ -1,78 +1,237 @@
-# Atividades de Configuração do Ambiente de Testes — PokéManager API
+# Atividades
 
-Este documento guia a estruturação e validação do ecossistema de testes automatizados com **Jest** e **TypeScript**, garantindo o isolamento arquitetural da Clean Architecture, resolução correta de Path Aliases e métricas de cobertura de código.
+Este guia contém o roteiro passo a passo das atividades práticas para configurar a análise estática (**ESLint + Prettier**), preparar os scripts de validação e ativar a esteira de **Integração Contínua (CI)** no **GitHub Actions** com banco de dados PostgreSQL efêmero e proteção de branch.
 
 ---
 
-## 📦 1. Instalação de Dependências
+## 📦 Etapa 1: Instalação de Dependências de Qualidade
 
-* [ ] **1.1. Instalar o motor de testes e compilador TypeScript**
-  * Executar no terminal:
+* [ ] **1.1. Instalar ESLint, TypeScript-ESLint e Prettier**
+  * No terminal, na raiz do projeto, execute:
+
     ```bash
-    npm install -D jest ts-jest @types/jest
-    ```
-* [ ] **1.2. Instalar ferramentas auxiliares para testes de borda e variáveis de ambiente (Preparação para Integração)**
-  * Executar no terminal:
-    ```bash
-    npm install -D supertest @types/supertest dotenv-cli
+    npm install -D eslint @eslint/js typescript-eslint globals prettier eslint-config-prettier eslint-plugin-prettier
     ```
 
 ---
 
-## ⚙️ 2. Configuração do Jest & Path Aliases
+## 🎨 Etapa 2: Configuração de Formatação e Regras de Lint
 
-* [ ] **2.1. Criar o arquivo `jest.config.ts` na raiz do projeto**
-  * Configurar o preset `ts-jest` e `testEnvironment: 'node'`.
-  * Definir o mapeamento de `moduleNameMapper` espelhando os aliases do `tsconfig.json`:
-    * `@domain/*` $\rightarrow$ `<rootDir>/src/domain/$1`
-    * `@application/*` $\rightarrow$ `<rootDir>/src/application/$1`
-    * `@infrastructure/*` $\rightarrow$ `<rootDir>/src/infrastructure/$1`
-    * `@main/*` $\rightarrow$ `<rootDir>/src/main/$1`
-    * `@tests/*` $\rightarrow$ `<rootDir>/tests/$1`
-  * Configurar `clearMocks: true` para isolamento entre os casos de teste.
-* [ ] **2.2. Configurar thresholds e diretivas de cobertura (`collectCoverageFrom`)**
-  * Incluir `src/domain/**/*.ts` e `src/application/useCases/**/*.ts`.
-  * Excluir tipagens (`*.d.ts`), arquivos de exportação (`index.ts`) e interfaces puras.
-  * Estabelecer meta mínima global (`coverageThreshold`) de **80%** para *branches*, *functions*, *lines* e *statements*.
-* [ ] **2.3. Verificar inclusão da pasta `tests/` no `tsconfig.json`**
-  * Garantir que o TypeScript reconheça os arquivos `.spec.ts` e `.test.ts` sem gerar erros de compilação ou incluir arquivos de teste no build de produção (`dist/`).
+* [ ] **2.1. Criar o arquivo `.prettierrc` na raiz do projeto**
+  * Padroniza aspas simples, ponto e vírgula, largura máxima de linha e quebra de linha LF (evitando falhas entre Windows e Linux no CI):
+
+    ```json
+    {
+      "semi": true,
+      "singleQuote": true,
+      "trailingComma": "all",
+      "printWidth": 100,
+      "tabWidth": 2,
+      "arrowParens": "always",
+      "endOfLine": "lf"
+    }
+    ```
+
+* [ ] **2.2. Criar o arquivo `.prettierignore` na raiz do projeto**
+  * Ignora diretórios compilados, migrações e arquivos gerados automaticamente:
+
+    ```txt
+    node_modules
+    dist
+    coverage
+    prisma/migrations
+    src/infrastructure/http/docs/swagger-output.json
+    ```
+
+* [ ] **2.3. Criar o arquivo `eslint.config.mjs` (Flat Config) na raiz**
+  * Integra as regras do TypeScript com o Prettier e proíbe `console.log` soltos e variáveis não utilizadas:
+
+    ```javascript
+    import js from '@eslint/js';
+    import globals from 'globals';
+    import tseslint from 'typescript-eslint';
+    import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
+
+    export default tseslint.config(
+      {
+        ignores: [
+          'dist/**',
+          'node_modules/**',
+          'coverage/**',
+          'prisma/migrations/**',
+          'src/infrastructure/http/docs/swagger-output.json',
+        ],
+      },
+      js.configs.recommended,
+      ...tseslint.configs.recommended,
+      {
+        files: ['src/**/*.ts', 'tests/**/*.ts'],
+        languageOptions: {
+          ecmaVersion: 2022,
+          sourceType: 'module',
+          globals: {
+            ...globals.node,
+            ...globals.jest,
+          },
+        },
+        rules: {
+          '@typescript-eslint/no-unused-vars': [
+            'error',
+            { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+          ],
+          '@typescript-eslint/no-explicit-any': 'warn',
+          'prefer-const': 'error',
+          'no-console': ['warn', { allow: ['warn', 'error'] }],
+        },
+      },
+      eslintPluginPrettierRecommended,
+    );
+    ```
 
 ---
 
-## 📜 3. Scripts de Automação (`package.json`)
+## ⚙️ Etapa 3: Scripts de Automação e Validação Local
 
-* [ ] **3.1. Adicionar os comandos de execução na seção `"scripts"` do `package.json`:**
-  * `"test": "jest --runInBand"` (Execução sequencial completa)
-  * `"test:watch": "jest --watch"` (Modo interativo em tempo real durante o desenvolvimento)
-  * `"test:unit": "jest --testPathPattern=tests/unit"` (Execução ultrarrápida apenas da camada de domínio/aplicação)
-  * `"test:coverage": "jest --coverage"` (Geração de relatório matricial no terminal e visual em HTML)
-  * `"test:ci": "jest --ci --coverage --runInBand"` (Execução estrita para pipelines de CI/CD)
-* [ ] **3.2. Ignorar diretório de relatórios no `.gitignore`**
-  * Adicionar `coverage/` ao arquivo `.gitignore` para evitar versionamento de arquivos gerados.
+* [ ] **3.1. Atualizar a seção `"scripts"` do arquivo `package.json`**
+  * Adicione os comandos abaixo para padronizar as verificações locais e na esteira de CI:
+
+    ```json
+    {
+      "scripts": {
+        "build": "tsc",
+        "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --max-warnings=0",
+        "lint:fix": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --fix",
+        "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+        "typecheck": "tsc --noEmit",
+        "test:unit": "jest --testPathPattern=tests/unit",
+        "test:integration": "jest --testPathPattern=tests/integration --runInBand",
+        "test:ci": "jest --ci --coverage --runInBand"
+      }
+    }
+    ```
+
+* [ ] **3.2. Executar bateria de validação local**
+  * Rode os comandos abaixo sequencialmente e corrija qualquer apontamento antes de commitar:
+
+    ```bash
+    npm run lint:fix
+    npm run lint
+    npm run typecheck
+    npm run build
+    ```
 
 ---
 
-## 📁 4. Estruturação de Diretórios e Dublês (Test Doubles)
+## 🤖 Etapa 4: Configuração do Workflow no GitHub Actions
 
-* [ ] **4.1. Criar a árvore de diretórios de testes na raiz:**
-  ```text
-  tests/
-  ├── unit/          # Testes isolados de Entidades e Use Cases (*.spec.ts)
-  ├── integration/   # Testes de Repositórios, Middlewares e Endpoints (*.test.ts)
-  └── mocks/         # Implementações In-Memory e Fakes reutilizáveis
-  ```
-* [ ] **4.2. Implementar dublês base em `tests/mocks/`:**
-  * `in-memory-user-repository.ts`: Implementação em memória da interface `IUserRepository`.
-  * `in-memory-token-repository.ts`: Implementação em memória da interface `TokenRepository` (Refresh Tokens + Blacklist).
-  * `fake-hash-provider.ts`: Dublê determinístico rápido da interface `HashProvider` (substituindo o custo de CPU do `bcrypt`).
+* [ ] **4.1. Criar a estrutura de diretórios `.github/workflows/`**
+  * Na raiz do projeto, crie a pasta `.github` e dentro dela a pasta `workflows`.
+
+* [ ] **4.2. Criar o arquivo `.github/workflows/ci.yml`**
+  * Configure o pipeline com PostgreSQL em contêiner (`services`), cache do `npm`, migrations do Prisma, testes automatizados e build:
+
+    ```yaml
+    name: CI - Quality, Build & Tests
+
+    on:
+      push:
+        branches: [main, develop]
+      pull_request:
+        branches: [main, develop]
+
+    jobs:
+      ci-pipeline:
+        name: Lint, Build & Automated Tests
+        runs-on: ubuntu-latest
+
+        services:
+          postgres:
+            image: postgres:16-alpine
+            env:
+              POSTGRES_USER: poke_user
+              POSTGRES_PASSWORD: poke_password
+              POSTGRES_DB: pokemanager_test
+            ports:
+              - 5432:5432
+            options: >-
+              --health-cmd pg_isready
+              --health-interval 10s
+              --health-timeout 5s
+              --health-retries 5
+
+        env:
+          NODE_ENV: test
+          PORT: 3333
+          DATABASE_URL: postgresql://poke_user:poke_password@localhost:5432/pokemanager_test?schema=public
+          JWT_SECRET: ci_pipeline_super_secret_jwt_key_minimum_32_characters
+          JWT_EXPIRES_IN: 15m
+          VIA_CEP_BASE_URL: https://viacep.com.br/ws
+          FRONTEND_URL: http://localhost:3000
+
+        steps:
+          - name: Checkout repository
+            uses: actions/checkout@v4
+
+          - name: Setup Node.js
+            uses: actions/setup-node@v4
+            with:
+              node-version: '20'
+              cache: 'npm'
+
+          - name: Install dependencies
+            run: npm ci
+
+          - name: Run Linter & Typecheck
+            run: |
+              npm run lint
+              npm run typecheck
+
+          - name: Setup Prisma & Database Migrations
+            run: |
+              npx prisma generate
+              npx prisma migrate deploy
+
+          - name: Run Automated Tests with Coverage
+            run: npm run test:ci
+
+          - name: Build Application
+            run: npm run build
+
+          - name: Upload Coverage Report
+            if: always()
+            uses: actions/upload-artifact@v4
+            with:
+              name: coverage-report
+              path: coverage/
+              retention-days: 7
+    ```
 
 ---
 
-## ✅ 5. Validação do Ambiente (Smoke Test)
+## 🔒 Etapa 5: Pull Request, Branch Protection e Teste de Fogo
 
-* [ ] **5.1. Criar o primeiro teste unitário (`tests/unit/create-user.use-case.spec.ts`)**
-  * Cobrir o fluxo de criação com sucesso (padrão AAA: Arrange, Act, Assert).
-  * Cobrir a regra de negócio de bloqueio por e-mail duplicado (`ConflictError`).
-* [ ] **5.2. Executar e validar a suíte**
-  * Rodar `npm run test:unit` e confirmar execução em milissegundos sem depender de Docker/Banco ativo.
-  * Rodar `npm run test:coverage` e abrir `coverage/lcov-report/index.html` no navegador para inspecionar a cobertura visual.
+* [ ] **5.1. Criar branch de feature e enviar para o GitHub**
+  * Execute os comandos Git:
+
+    ```bash
+    git checkout -b feat/ci-github-actions
+    git add .
+    git commit -m "ci: add eslint, prettier and github actions workflow"
+    git push -u origin feat/ci-github-actions
+    ```
+
+* [ ] **5.2. Abrir Pull Request e validar a execução**
+  * No GitHub, abra um **Pull Request** de `feat/ci-github-actions` para `main`.
+  * Acesse a aba **Actions** e verifique se todas as etapas (Setup, Lint, Prisma Migrations, Testes e Build) concluíram com sucesso (ícone verde).
+
+* [ ] **5.3. Ativar regra de proteção na branch `main`**
+  * Acesse **Settings ➔ Branches ➔ Add branch protection rule**.
+  * Em **Branch name pattern**, digite `main`.
+  * Marque **Require a pull request before merging**.
+  * Marque **Require status checks to pass before merging** e selecione `Lint, Build & Automated Tests`.
+  * Salve a regra e realize o merge do PR.
+
+* [ ] **5.4. Realizar o Teste de Fogo (Simulação de Falha)**
+  * Crie uma nova branch (`test/ci-validation`), insira um `console.log('teste')` solto em algum arquivo ou quebre propositalmente uma asserção de teste e faça o `git push`.
+  * Abra um Pull Request e confirme que o GitHub Actions detecta a falha e **bloqueia o botão de Merge**.
+  * Reverta o erro, envie o novo commit e confirme a liberação automática do PR.
