@@ -1,301 +1,236 @@
-# Testes Unitários de Regras de Negócio e Casos de Uso
+# Automação de Workflows com CI/CD (GitHub Actions)
 
-## Testando Comportamento vs. Testando Implementação (Fragile Tests)
+## Fundamentação Teórica
 
-- A Armadilha: Fazer asserções excessivas sobre detalhes internos privados (ex: verificar exatamente quantas vezes um método privado auxiliar foi chamado em vez do resultado final). Se o desenvolvedor refatorar o algoritmo interno mantendo a mesma regra de negócio, o teste quebra.
+### 1. O Problema do "Na Minha Máquina Funciona"
 
-- A Regra de Ouro: O teste unitário deve acoplar-se apenas ao contrato público (entrada e saída do Use Case ou mudança de estado observável no repositório em memória).
+Sem uma esteira automatizada de CI, a qualidade do repositório depende exclusivamente da disciplina individual de cada desenvolvedor rodar os testes e o linter antes do git push. Em equipes reais, um único commit esquecido quebra o build de toda a equipe e introduz regressões silenciosas.
 
-## Propriedades F.I.R.S.T. de Bons Testes Unitários
+### 2. CI vs. CD: Onde Atuamos Hoje?
 
-- Fast (Rápidos): Devem rodar em milissegundos para não desencorajar o desenvolvedor de rodá-los a cada salvamento.
+Continuous Integration (CI — Integração Contínua): Prática de integrar alterações de código frequentemente (várias vezes ao dia) em um repositório central. Cada push ou Pull Request dispara automaticamente uma bateria de validações (Lint, Build, Testes). Se qualquer etapa falhar, o merge é bloqueado (Fail-Fast na esteira).
 
-- Independent / Isolated (Independentes): A ordem de execução nunca pode importar. O Teste B jamais pode depender do registro criado pelo Teste A.
+Continuous Delivery / Deployment (CD — Entrega/Implantação Contínua): Extensão do CI que empacota a aplicação aprovada (ex: imagem Docker) e a disponibiliza automaticamente em ambientes de homologação (Staging) ou produção.
 
-- Repeatable (Repetíveis): Devem produzir exatamente o mesmo resultado na máquina do desenvolvedor, no servidor de CI/CD ou sem conexão com a internet (cuidado com new Date() sem controle de relógio).
+### 3. GitHub Actions
 
-- Self-Validating (Auto-validáveis): O resultado deve ser estritamente booleano (Passou / Falhou) sem depender de leitura manual de console.log.
+O GitHub Actions é uma plataforma nativa de automação e CI/CD (Integração Contínua e Entrega/Implantação Contínua) integrada diretamente aos repositórios do GitHub. Ele permite automatizar tarefas como compilação, execução de testes, empacotamento em contêineres e deploy a partir de eventos do repositório (como push, pull_request ou release).
 
-- Timely (Oportunos): Escritos junto com o código de produção (ou antes, no TDD), nunca deixados para "quando sobrar tempo".
+### 4. Anatomia de um Workflow no GitHub Actions
 
-## Particionamento de Equivalência e Análise de Valor Limite (Boundary Value Analysis)
+```txt
 
-Em vez de testar dez senhas diferentes aleatoriamente, divide-se o domínio em classes de equivalência e testa-se exatamente as fronteiras. Exemplo para um Refresh Token com validade de 7 dias:
+Gatilho (Trigger: push / pull_request na branch main)
+       │
+       ▼
+ ┌─────────────────────────────────────────────────────────────────────────┐
+ │ WORKFLOW (.github/workflows/ci.yml)                                     │
+ │  ├─ JOB: quality-and-tests (Roda em uma VM Ubuntu efêmera - Runner)     │
+ │  │   ├─ SERVICE: postgres:16-alpine (Banco temporário na rede interna)  │
+ │  │   ├─ STEP 1: actions/checkout@v4 (Baixa o código do repositório)     │
+ │  │   ├─ STEP 2: actions/setup-node@v4 (Instala Node 20 + Cache npm)     │
+ │  │   ├─ STEP 3: npm ci (Instalação limpa e determinística)              │
+ │  │   ├─ STEP 4: Lint & Typecheck (Análise estática de código)           │
+ │  │   ├─ STEP 5: Prisma Generate & Migrate Deploy (Prepara o banco)      │
+ │  │   ├─ STEP 6: Testes Unitários + Integração (Jest + Supertest)        │
+ │  │   └─ STEP 7: npm run build (Garante compilação TS -> JS sem erros)   │
+ └─────────────────────────────────────────────────────────────────────────┘
 
-- Fronteira Válida: 6 dias, 23 horas e 59 minutos (deve passar).
+```
 
-- Fronteira Exata / Inválida: 7 dias e 1 segundo (deve lançar UnauthorizedError).
+Os fluxos de trabalho são definidos em arquivos YAML dentro do diretório .github/workflows/ na raiz do repositório e seguem uma estrutura principal:
 
-## Implementação Prática
+• Gatilhos (on): eventos que iniciam a automação, como push na branch main, abertura de um Pull Request ou execução agendada.
+• Jobs: conjuntos de etapas que rodam em máquinas virtuais (runners) Linux, Windows ou macOS hospedadas pelo GitHub ou em runners auto-hospedados.
+• Steps e Actions: comandos de shell ou ações reutilizáveis (do marketplace ou criadas pela equipe) que executam tarefas específicas, como instalar dependências, rodar testes e publicar artefatos.
 
-1. Dublê em Memória para Tokens (tests/mocks/in-memory-token-repository.ts)
+```yml
 
-```ts
+name: CI/CD Pipeline
 
-// tests/mocks/in-memory-token-repository.ts
-import { TokenRepository, RefreshTokenData } from '@domain/repositories/token-repository';
-import { randomUUID } from 'crypto';
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
-export class InMemoryTokenRepository implements TokenRepository {
-  public refreshTokens: RefreshTokenData[] = [];
-  public blacklist: Set<string> = new Set();
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
 
-  async createRefreshToken(userId: string, token: string, expiresIn: Date): Promise<RefreshTokenData> {
-    await this.deleteRefreshTokenByUserId(userId);
+      - name: Configurar ambiente
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
-    const record: RefreshTokenData = {
-      id: randomUUID(),
-      userId,
-      token,
-      expiresIn,
-    };
+      - name: Instalar e testar
+        run: |
+          npm ci
+          npm test
 
-    this.refreshTokens.push(record);
-    return record;
-  }
 
-  async findRefreshToken(token: string): Promise<RefreshTokenData | null> {
-    return this.refreshTokens.find((item) => item.token === token) || null;
-  }
+```
 
-  async deleteRefreshTokenByUserId(userId: string): Promise<void> {
-    this.refreshTokens = this.refreshTokens.filter((item) => item.userId !== userId);
-  }
+Boas práticas essenciais
 
-  async invalidateToken(token: string, _ttlInSeconds: number): Promise<void> {
-    this.blacklist.add(token);
-  }
+• Segurança e segredos: armazene tokens, chaves de API e credenciais de nuvem em GitHub Secrets ou use OIDC em vez de credenciais estáticas de longa duração.
+• Ambientes e aprovações: use Environments com regras de proteção e revisão manual antes de publicar em produção.
+• Eficiência: utilize cache de dependências e dispare etapas de deploy apenas após a aprovação dos testes.
 
-  async isTokenInvalidated(token: string): Promise<boolean> {
-    return this.blacklist.has(token);
+### 5. Diferença Crítica: npm install vs. npm ci
+
+npm install: Pode atualizar pacotes dentro das faixas semânticas (^ ou ~) e modificar o package-lock.json. Mais lento e sujeito a variações entre máquinas.
+
+npm ci (Clean Install): Apaga a node_modules existente e instala exatamente as versões travadas no package-lock.json. Se houver divergência entre package.json e package-lock.json, ele falha imediatamente. É obrigatório em ambientes de CI.
+
+## Preparação dos Scripts no package.json
+
+Antes de escrever o arquivo YAML do GitHub Actions, garantimos que todos os comandos de verificação existam e funcionem localmente:
+
+```json
+
+{
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:integration": "jest --testPathPattern=tests/integration --runInBand",
+    "test:ci": "jest --ci --coverage --runInBand"
   }
 }
 
 ```
 
-2. Suíte de Testes Unitários: RefreshTokenUseCase (tests/unit/refresh-token.use-case.spec.ts)
+## Implementação do Workflow (.github/workflows/ci.yml)
 
-Cobre todas as ramificações (Branches): token inexistente, token expirado (validando o expurgo automático) e sucesso com rotação de token.
+O GitHub Actions procura arquivos YAML dentro do diretório oculto .github/workflows/. Abaixo está a pipeline completa da PokéManager API, incluindo um contêiner PostgreSQL efêmero para rodar os testes de integração com Supertest:
 
-```ts
+```yml
 
-// tests/unit/refresh-token.use-case.spec.ts
-import { RefreshTokenUseCase } from '@application/useCases/refresh-token.use-case';
-import { InMemoryTokenRepository } from '../mocks/in-memory-token-repository';
-import { InMemoryUserRepository } from '../mocks/in-memory-user-repository';
-import { User } from '@domain/entities/user';
-import { UnauthorizedError } from '@domain/errors/unauthorized-error';
+# .github/workflows/ci.yml
+name: CI - Quality, Build & Tests
 
-describe('RefreshTokenUseCase (Unit)', () => {
-  let tokenRepository: InMemoryTokenRepository;
-  let userRepository: InMemoryUserRepository;
-  let sut: RefreshTokenUseCase;
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
 
-  beforeEach(() => {
-    tokenRepository = new InMemoryTokenRepository();
-    userRepository = new InMemoryUserRepository();
-    sut = new RefreshTokenUseCase(tokenRepository, userRepository);
-  });
+jobs:
+  ci-pipeline:
+    name: Lint, Build & Automated Tests
+    runs-on: ubuntu-latest
 
-  it('deve emitir um novo par de Access Token e Refresh Token rotacionado quando válido', async () => {
-    // Arrange
-    const user = new User({
-      id: 'user-123',
-      name: 'Lance Dragonmaster',
-      email: 'lance@indigo.com',
-      password: 'hashed_password',
-      role: 'ADMIN',
-    });
-    await userRepository.create(user);
+    # Sobe um banco PostgreSQL efêmero exclusivo para a execução desta pipeline
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: poke_user
+          POSTGRES_PASSWORD: poke_password
+          POSTGRES_DB: pokemanager_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
-    const futureDate = new Date();
-    futureDate.setDate(futureDate.getDate() + 7);
-    await tokenRepository.createRefreshToken('user-123', 'valid-refresh-uuid', futureDate);
+    # Variáveis de ambiente injetadas em todos os steps (validadas pelo env.ts com Zod)
+    env:
+      NODE_ENV: test
+      PORT: 3333
+      DATABASE_URL: postgresql://poke_user:poke_password@localhost:5432/pokemanager_test?schema=public
+      JWT_SECRET: ci_pipeline_super_secret_jwt_key_minimum_32_characters
+      JWT_EXPIRES_IN: 15m
+      VIA_CEP_BASE_URL: https://viacep.com.br/ws
+      FRONTEND_URL: http://localhost:3000
 
-    // Act
-    const response = await sut.execute({ refreshToken: 'valid-refresh-uuid' });
+    steps:
+      # 1. Faz o clone do código do commit/PR atual
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    // Assert
-    expect(response).toHaveProperty('token');
-    expect(response).toHaveProperty('refreshToken');
-    expect(response.refreshToken).not.toBe('valid-refresh-uuid'); // Garante rotação
-    expect(tokenRepository.refreshTokens).toHaveLength(1);
-    expect(tokenRepository.refreshTokens[0].token).toBe(response.refreshToken);
-  });
+      # 2. Configura o Node.js com cache nativo do npm para acelerar builds futuros
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-  it('deve lançar UnauthorizedError se o Refresh Token não existir no repositório', async () => {
-    await expect(
-      sut.execute({ refreshToken: 'non-existent-token' })
-    ).rejects.toBeInstanceOf(UnauthorizedError);
-  });
+      # 3. Instalação determinística das dependências
+      - name: Install dependencies
+        run: npm ci
 
-  it('deve lançar UnauthorizedError e remover o token caso esteja expirado', async () => {
-    // Arrange
-    const pastDate = new Date();
-    pastDate.setMinutes(pastDate.getMinutes() - 10); // Expirado há 10 minutos
-    await tokenRepository.createRefreshToken('user-123', 'expired-token', pastDate);
+      # 4. Análise estática (ESLint + Verificação de Tipos TypeScript)
+      - name: Run Linter & Typecheck
+        run: |
+          npm run lint
+          npm run typecheck
 
-    // Act & Assert
-    await expect(
-      sut.execute({ refreshToken: 'expired-token' })
-    ).rejects.toBeInstanceOf(UnauthorizedError);
+      # 5. Geração do Prisma Client e aplicação das migrations no banco do service
+      - name: Setup Prisma & Database Migrations
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
 
-    // Garante que o token vencido foi expurgado
-    expect(tokenRepository.refreshTokens).toHaveLength(0);
-  });
-});
+      # 6. Execução completa da suíte de testes (Unitários + Integração + Coverage)
+      - name: Run Automated Tests with Coverage
+        run: npm run test:ci
 
-```
+      # 7. Compilação final da aplicação para JavaScript (dist/)
+      - name: Build Application
+        run: npm run build
 
-3. Teste de Invariantes de Entidade (tests/unit/domain/user.entity.spec.ts)
-
-Garante que as regras de negócio intrínsecas da entidade User funcionam independentemente de qualquer Use Case:
-
-```ts
-
-// tests/unit/domain/user.entity.spec.ts
-import { User } from '@domain/entities/user';
-
-describe('User Entity (Unit)', () => {
-  it('deve atribuir role USER e gerar timestamps automaticamente quando não informados', () => {
-    const user = new User({
-      name: 'Professor Oak',
-      email: 'oak@pallet.com',
-      password: 'hashed_password',
-    });
-
-    expect(user.role).toBe('USER');
-    expect(user.createdAt).toBeInstanceOf(Date);
-    expect(user.updatedAt).toBeInstanceOf(Date);
-  });
-
-  it('deve atualizar a senha e renovar o timestamp updatedAt', () => {
-    const pastDate = new Date('2025-01-01T10:00:00Z');
-    const user = new User({
-      name: 'Blue Oak',
-      email: 'blue@viridian.com',
-      password: 'old_hashed_password',
-      updatedAt: pastDate,
-    });
-
-    user.updatePassword('new_hashed_password');
-
-    expect(user.password).toBe('new_hashed_password');
-    expect(user.updatedAt.getTime()).toBeGreaterThan(pastDate.getTime());
-  });
-});
+      # 8. (Opcional) Publica o relatório de cobertura como artefato para download no PR
+      - name: Upload Coverage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
 
 ```
 
-4. Teste de Autenticação (tests/unit/application/authenticate-user.use-case.spec.ts)
+## Governança de Repositório (Branch Protection Rules)
 
-Cobre todas as ramificações (Branches) do login: credenciais corretas, usuário inexistente e senha incorreta:
+A esteira de CI só cumpre seu papel de barreira de qualidade quando o repositório impede o merge de Pull Requests que falharam nas verificações:
 
-```ts
+1. No GitHub, acesse Settings ➔ Branches ➔ Add branch protection rule.
 
-// tests/unit/application/authenticate-user.use-case.spec.ts
-import { AuthenticateUserUseCase } from '@application/useCases/authenticate-user.use-case';
-import { InMemoryUserRepository } from '../../mocks/in-memory-user-repository';
-import { FakeHashProvider } from '../../mocks/fake-hash-provider';
-import { User } from '@domain/entities/user';
-import { UnauthorizedError } from '@domain/errors/unauthorized-error';
+2. Em Branch name pattern, informe main.
 
-describe('AuthenticateUserUseCase (Unit)', () => {
-  let userRepository: InMemoryUserRepository;
-  let hashProvider: FakeHashProvider;
-  let sut: AuthenticateUserUseCase;
+3. Marque Require a pull request before merging (bloqueia git push direto na main).
 
-  beforeEach(async () => {
-    userRepository = new InMemoryUserRepository();
-    hashProvider = new FakeHashProvider();
-    sut = new AuthenticateUserUseCase(userRepository, hashProvider);
+4. Marque Require status checks to pass before merging e selecione o job Lint, Build & Automated Tests.
 
-    const hashedPassword = await hashProvider.generateHash('pikachu123');
-    await userRepository.create(
-      new User({
-        id: 'user-01',
-        name: 'Ash Ketchum',
-        email: 'ash@kanto.com',
-        password: hashedPassword,
-        role: 'USER',
-      })
-    );
-  });
+5. Marque Require branches to be up to date before merging (garante que o PR seja testado contra o estado mais recente da main).
 
-  it('deve autenticar com credenciais válidas e retornar token JWT e dados do usuário', async () => {
-    const result = await sut.execute({
-      email: 'ash@kanto.com',
-      password: 'pikachu123',
-    });
+## ESLint e Prettier (npm lint)
 
-    expect(result).toHaveProperty('token');
-    expect(result.user.email).toBe('ash@kanto.com');
-    expect(result.user).not.toHaveProperty('password');
-  });
+Para que o passo npm run lint na esteira de CI funcione de forma determinística e sem conflitos entre formatação e regras de análise estática, utilizamos o ESLint v9+ (Flat Config) integrado ao TypeScript-ESLint e ao Prettier.
 
-  it('deve lançar UnauthorizedError quando o e-mail não estiver cadastrado', async () => {
-    await expect(
-      sut.execute({
-        email: 'desconhecido@kanto.com',
-        password: 'pikachu123',
-      })
-    ).rejects.toBeInstanceOf(UnauthorizedError);
-  });
+Adicione os comandos de verificação estática e formatação automática:
 
-  it('deve lançar UnauthorizedError quando a senha estiver incorreta', async () => {
-    await expect(
-      sut.execute({
-        email: 'ash@kanto.com',
-        password: 'senhaErrada',
-      })
-    ).rejects.toBeInstanceOf(UnauthorizedError);
-  });
-});
+```json
+
+{
+  "scripts": {
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --max-warnings=0",
+    "lint:fix": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  }
+}
 
 ```
 
-3. Teste de Sanitização de DTO (tests/unit/application/get-current-user.use-case.spec.ts)
+- `--max-warnings=0` no `npm run lint`: Faz com que qualquer warn (como um console.log esquecido ou um any explícito) também falhe a esteira de CI, mantendo o repositório estritamente limpo.
 
-Garante que dados sensíveis (password) nunca vazem na camada de apresentação e valida a falha quando o ID não existe:
-
-```ts
-
-// tests/unit/application/get-current-user.use-case.spec.ts
-import { GetCurrentUserUseCase } from '@application/useCases/get-current-user.use-case';
-import { InMemoryUserRepository } from '../../mocks/in-memory-user-repository';
-import { User } from '@domain/entities/user';
-import { NotFoundError } from '@domain/errors/notFound.error';
-
-describe('GetCurrentUserUseCase (Unit)', () => {
-  let userRepository: InMemoryUserRepository;
-  let sut: GetCurrentUserUseCase;
-
-  beforeEach(() => {
-    userRepository = new InMemoryUserRepository();
-    sut = new GetCurrentUserUseCase(userRepository);
-  });
-
-  it('deve retornar os dados públicos do usuário sem expor o campo password', async () => {
-    await userRepository.create(
-      new User({
-        id: 'trainer-99',
-        name: 'May',
-        email: 'may@hoenn.com',
-        password: 'secret_hash_value',
-        role: 'USER',
-      })
-    );
-
-    const profile = await sut.execute('trainer-99');
-
-    expect(profile.id).toBe('trainer-99');
-    expect(profile.email).toBe('may@hoenn.com');
-    expect(profile).not.toHaveProperty('password');
-  });
-
-  it('deve lançar NotFoundError se o usuário não existir', async () => {
-    await expect(sut.execute('id-inexistente')).rejects.toBeInstanceOf(NotFoundError);
-  });
-});
-
-```
+- `npm run lint:fix`: Corrige automaticamente formatação, ponto e vírgula, aspas e regras auto-corrigíveis antes do commit.

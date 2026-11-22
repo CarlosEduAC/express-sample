@@ -1,85 +1,237 @@
 # Atividades
 
-Este documento consolida todas as tarefas práticas necessárias para cobrir a **Pirâmide de Testes** da **PokéManager API**, desde o núcleo isolado de Domínio/Aplicação até a borda HTTP integrada com banco de dados de testes.
+Este guia contém o roteiro passo a passo das atividades práticas para configurar a análise estática (**ESLint + Prettier**), preparar os scripts de validação e ativar a esteira de **Integração Contínua (CI)** no **GitHub Actions** com banco de dados PostgreSQL efêmero e proteção de branch.
 
 ---
 
-## 🧩 Parte 1: Testes Unitários (Domínio & Aplicação)
+## 📦 Etapa 1: Instalação de Dependências de Qualidade
 
-**Premissa:** Zero I/O (sem Express, sem PostgreSQL, sem chamadas de rede). Todos os testes devem rodar em milissegundos usando dublês em memória (*Fakes*) e aplicando o padrão **AAA (Arrange, Act, Assert)** e princípios **F.I.R.S.T.**
+* [ ] **1.1. Instalar ESLint, TypeScript-ESLint e Prettier**
+  * No terminal, na raiz do projeto, execute:
 
-### 1.1. Dublês de Teste (Test Doubles em `tests/mocks/`)
-
-* [ ] **Criar `in-memory-user-repository.ts`**: Implementar `create`, `findByEmail`, `findById` e `findAll` armazenando usuários em um array local.
-* [ ] **Criar `in-memory-token-repository.ts`**: Implementar `createRefreshToken`, `findRefreshToken`, `deleteRefreshTokenByUserId`, `invalidateToken` e `isTokenInvalidated` (usando `Set` em memória para a Blacklist).
-* [ ] **Criar `fake-hash-provider.ts`**: Implementar `generateHash` e `compareHash` de forma determinística e instantânea (`hashed_${payload}`).
-
-### 1.2. Testes de Entidades de Domínio (`tests/unit/domain/`)
-
-* [ ] **`user.spec.ts`**:
-  * [ ] Validar criação da entidade atribuindo `role: 'USER'` por padrão quando não especificado.
-  * [ ] Validar geração automática de `id` e timestamps (`createdAt`, `updatedAt`).
-  * [ ] Validar atualização de senha ou propriedades garantindo imutabilidade/consistência de invariantes.
-
-### 1.3. Testes de Casos de Uso (`tests/unit/use-cases/`)
-
-* [ ] **`create-user.use-case.spec.ts`**:
-  * [ ] Cadastrar novo usuário com senha hasheada e papel padrão `USER`.
-  * [ ] Lançar `ConflictError` ao tentar cadastrar e-mail já existente (Análise de Fronteira).
-* [ ] **`authenticate-user.use-case.spec.ts`**:
-  * [ ] Gerar par de tokens (`token` JWT + `refreshToken`) quando credenciais estiverem corretas.
-  * [ ] Lançar `UnauthorizedError` quando o e-mail não for encontrado.
-  * [ ] Lançar `UnauthorizedError` quando a senha estiver incorreta.
-* [ ] **`refresh-token.use-case.spec.ts`**:
-  * [ ] Emitir novo `AccessToken` e novo `RefreshToken` rotacionado, invalidando o anterior.
-  * [ ] Lançar `UnauthorizedError` quando o Refresh Token fornecido não existir.
-  * [ ] Lançar `UnauthorizedError` e expurgar o registro quando o Refresh Token estiver expirado (`expiresIn < now`).
-* [ ] **`get-current-user.use-case.spec.ts`**:
-  * [ ] Retornar o DTO sanitizado do perfil do usuário (garantindo ausência do campo `password`).
-  * [ ] Lançar `NotFoundError` caso o ID do usuário não exista na base.
-
-### 1.4. Auditoria de Cobertura Unitária
-
-* [ ] Executar `npm run test:unit` e verificar tempo de execução abaixo de 2 segundos.
-* [ ] Executar `npm run test:coverage` e validar se os indicadores de **`% Branch`** estão acima de **80%** em todos os Use Cases.
+    ```bash
+    npm install -D eslint @eslint/js typescript-eslint globals prettier eslint-config-prettier eslint-plugin-prettier
+    ```
 
 ---
 
-## 🌐 Parte 2: Testes de Integração & E2E (Supertest + Banco de Testes)
+## 🎨 Etapa 2: Configuração de Formatação e Regras de Lint
 
-**Premissa:** Validar o fluxo HTTP real passando por todos os middlewares de borda (`helmet`, `cors`, `rate-limiter`, `sanitizeRequest`, `ensureAuthenticated`, `ensureRole`), validação Zod e persistência real no PostgreSQL via Prisma.
+* [ ] **2.1. Criar o arquivo `.prettierrc` na raiz do projeto**
+  * Padroniza aspas simples, ponto e vírgula, largura máxima de linha e quebra de linha LF (evitando falhas entre Windows e Linux no CI):
 
-### 2.1. Infraestrutura Isolada de Testes
+    ```json
+    {
+      "semi": true,
+      "singleQuote": true,
+      "trailingComma": "all",
+      "printWidth": 100,
+      "tabWidth": 2,
+      "arrowParens": "always",
+      "endOfLine": "lf"
+    }
+    ```
 
-* [ ] **Criar contrato `.env.test` na raiz do projeto**:
-  * [ ] Configurar `NODE_ENV=test` e `PORT=3334`.
-  * [ ] Apontar `DATABASE_URL` para um banco de dados exclusivo de testes (`pokemanager_test`) separado do banco de desenvolvimento.
-  * [ ] Definir `JWT_SECRET` válido (mínimo 32 caracteres).
-* [ ] **Criar helper de reset do banco (`tests/helpers/reset-db.ts`)**:
-  * [ ] Implementar função `resetDatabase()` executando `deleteMany()` em transação (`refreshToken` seguido de `user`) para garantir independência entre testes.
-* [ ] **Configurar script no `package.json`**:
-  * [ ] `"test:integration": "dotenv -e .env.test -- npx prisma migrate deploy && dotenv -e .env.test -- jest --testPathPattern=tests/integration --runInBand"`
-  * [ ] Garantir o uso da flag `--runInBand` para impedir *race conditions* entre suítes que compartilham o banco.
+* [ ] **2.2. Criar o arquivo `.prettierignore` na raiz do projeto**
+  * Ignora diretórios compilados, migrações e arquivos gerados automaticamente:
 
-### 2.2. Suítes de Integração HTTP (`tests/integration/`)
+    ```txt
+    node_modules
+    dist
+    coverage
+    prisma/migrations
+    src/infrastructure/http/docs/swagger-output.json
+    ```
 
-* [ ] **`auth-flow.test.ts` (Ciclo de Vida Completo de Sessão)**:
-  * [ ] `POST /api/v1/users`: Cadastrar usuário (`201 Created`) e validar omissão da senha no JSON de resposta.
-  * [ ] `POST /api/v1/auth/sessions`: Autenticar usuário (`200 OK`) e extrair `token` e `refreshToken`.
-  * [ ] `GET /api/v1/auth/me`: Acessar rota protegida com header `Authorization: Bearer <token>` (`200 OK`).
-  * [ ] `POST /api/v1/auth/refresh-token`: Renovar sessão (`200 OK`) e validar que o Refresh Token antigo não pode mais ser reutilizado (`401 Unauthorized`).
-  * [ ] `POST /api/v1/auth/logout`: Encerrar sessão (`200 OK`) e validar que tentativas subsequentes em `/auth/me` com o mesmo Access Token sejam barradas pela Blacklist (`401 Unauthorized`).
-* [ ] **`security-hardening.test.ts` (Blindagem OWASP & RBAC)**:
-  * [ ] **Sanitização XSS:** Enviar `<script>alert("xss")</script>` no campo `name` no cadastro e validar que a tag foi removida antes da persistência.
-  * [ ] **Controle de Acesso (RBAC):** Tentar acessar endpoint exclusivo de administrador com token de usuário `USER` e validar retorno `403 Forbidden`.
-  * [ ] **Validação de Payload (Zod):** Enviar e-mail malformado ou senha curta e validar retorno `400 Bad Request` estruturado.
-  * [ ] **Rate Limiting:** Disparar 6 tentativas consecutivas de login e confirmar bloqueio da borda com `429 Too Many Requests`.
-* [ ] **`address-gateway.test.ts` (Fronteiras Externas Herméticas)**:
-  * [ ] Interceptar requisições HTTP para o ViaCEP (usando `nock` ou mock do gateway) para simular resposta `200 OK` e `404 Not Found` sem depender de acesso externo à internet.
+* [ ] **2.3. Criar o arquivo `eslint.config.mjs` (Flat Config) na raiz**
+  * Integra as regras do TypeScript com o Prettier e proíbe `console.log` soltos e variáveis não utilizadas:
+
+    ```javascript
+    import js from '@eslint/js';
+    import globals from 'globals';
+    import tseslint from 'typescript-eslint';
+    import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended';
+
+    export default tseslint.config(
+      {
+        ignores: [
+          'dist/**',
+          'node_modules/**',
+          'coverage/**',
+          'prisma/migrations/**',
+          'src/infrastructure/http/docs/swagger-output.json',
+        ],
+      },
+      js.configs.recommended,
+      ...tseslint.configs.recommended,
+      {
+        files: ['src/**/*.ts', 'tests/**/*.ts'],
+        languageOptions: {
+          ecmaVersion: 2022,
+          sourceType: 'module',
+          globals: {
+            ...globals.node,
+            ...globals.jest,
+          },
+        },
+        rules: {
+          '@typescript-eslint/no-unused-vars': [
+            'error',
+            { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+          ],
+          '@typescript-eslint/no-explicit-any': 'warn',
+          'prefer-const': 'error',
+          'no-console': ['warn', { allow: ['warn', 'error'] }],
+        },
+      },
+      eslintPluginPrettierRecommended,
+    );
+    ```
 
 ---
 
-## 🚀 Parte 3: Validação Final da Pipeline (CI Ready)
+## ⚙️ Etapa 3: Scripts de Automação e Validação Local
 
-* [ ] Executar `npm run test:all` garantindo que tanto `test:unit` quanto `test:integration` passem sem falhas intermitentes (*flakiness*).
-* [ ] Validar desconexão limpa do Prisma (`await prisma.$disconnect()`) no hook `afterAll` de todas as suítes de integração para evitar avisos de *open handles* no Jest.
+* [ ] **3.1. Atualizar a seção `"scripts"` do arquivo `package.json`**
+  * Adicione os comandos abaixo para padronizar as verificações locais e na esteira de CI:
+
+    ```json
+    {
+      "scripts": {
+        "build": "tsc",
+        "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --max-warnings=0",
+        "lint:fix": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --fix",
+        "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+        "typecheck": "tsc --noEmit",
+        "test:unit": "jest --testPathPattern=tests/unit",
+        "test:integration": "jest --testPathPattern=tests/integration --runInBand",
+        "test:ci": "jest --ci --coverage --runInBand"
+      }
+    }
+    ```
+
+* [ ] **3.2. Executar bateria de validação local**
+  * Rode os comandos abaixo sequencialmente e corrija qualquer apontamento antes de commitar:
+
+    ```bash
+    npm run lint:fix
+    npm run lint
+    npm run typecheck
+    npm run build
+    ```
+
+---
+
+## 🤖 Etapa 4: Configuração do Workflow no GitHub Actions
+
+* [ ] **4.1. Criar a estrutura de diretórios `.github/workflows/`**
+  * Na raiz do projeto, crie a pasta `.github` e dentro dela a pasta `workflows`.
+
+* [ ] **4.2. Criar o arquivo `.github/workflows/ci.yml`**
+  * Configure o pipeline com PostgreSQL em contêiner (`services`), cache do `npm`, migrations do Prisma, testes automatizados e build:
+
+    ```yaml
+    name: CI - Quality, Build & Tests
+
+    on:
+      push:
+        branches: [main, develop]
+      pull_request:
+        branches: [main, develop]
+
+    jobs:
+      ci-pipeline:
+        name: Lint, Build & Automated Tests
+        runs-on: ubuntu-latest
+
+        services:
+          postgres:
+            image: postgres:16-alpine
+            env:
+              POSTGRES_USER: poke_user
+              POSTGRES_PASSWORD: poke_password
+              POSTGRES_DB: pokemanager_test
+            ports:
+              - 5432:5432
+            options: >-
+              --health-cmd pg_isready
+              --health-interval 10s
+              --health-timeout 5s
+              --health-retries 5
+
+        env:
+          NODE_ENV: test
+          PORT: 3333
+          DATABASE_URL: postgresql://poke_user:poke_password@localhost:5432/pokemanager_test?schema=public
+          JWT_SECRET: ci_pipeline_super_secret_jwt_key_minimum_32_characters
+          JWT_EXPIRES_IN: 15m
+          VIA_CEP_BASE_URL: https://viacep.com.br/ws
+          FRONTEND_URL: http://localhost:3000
+
+        steps:
+          - name: Checkout repository
+            uses: actions/checkout@v4
+
+          - name: Setup Node.js
+            uses: actions/setup-node@v4
+            with:
+              node-version: '20'
+              cache: 'npm'
+
+          - name: Install dependencies
+            run: npm ci
+
+          - name: Run Linter & Typecheck
+            run: |
+              npm run lint
+              npm run typecheck
+
+          - name: Setup Prisma & Database Migrations
+            run: |
+              npx prisma generate
+              npx prisma migrate deploy
+
+          - name: Run Automated Tests with Coverage
+            run: npm run test:ci
+
+          - name: Build Application
+            run: npm run build
+
+          - name: Upload Coverage Report
+            if: always()
+            uses: actions/upload-artifact@v4
+            with:
+              name: coverage-report
+              path: coverage/
+              retention-days: 7
+    ```
+
+---
+
+## 🔒 Etapa 5: Pull Request, Branch Protection e Teste de Fogo
+
+* [ ] **5.1. Criar branch de feature e enviar para o GitHub**
+  * Execute os comandos Git:
+
+    ```bash
+    git checkout -b feat/ci-github-actions
+    git add .
+    git commit -m "ci: add eslint, prettier and github actions workflow"
+    git push -u origin feat/ci-github-actions
+    ```
+
+* [ ] **5.2. Abrir Pull Request e validar a execução**
+  * No GitHub, abra um **Pull Request** de `feat/ci-github-actions` para `main`.
+  * Acesse a aba **Actions** e verifique se todas as etapas (Setup, Lint, Prisma Migrations, Testes e Build) concluíram com sucesso (ícone verde).
+
+* [ ] **5.3. Ativar regra de proteção na branch `main`**
+  * Acesse **Settings ➔ Branches ➔ Add branch protection rule**.
+  * Em **Branch name pattern**, digite `main`.
+  * Marque **Require a pull request before merging**.
+  * Marque **Require status checks to pass before merging** e selecione `Lint, Build & Automated Tests`.
+  * Salve a regra e realize o merge do PR.
+
+* [ ] **5.4. Realizar o Teste de Fogo (Simulação de Falha)**
+  * Crie uma nova branch (`test/ci-validation`), insira um `console.log('teste')` solto em algum arquivo ou quebre propositalmente uma asserção de teste e faça o `git push`.
+  * Abra um Pull Request e confirme que o GitHub Actions detecta a falha e **bloqueia o botão de Merge**.
+  * Reverta o erro, envie o novo commit e confirme a liberação automática do PR.
